@@ -51,6 +51,56 @@ using namespace std;
 #include <srs_protocol_format.hpp>
 #include <openssl/rand.h>
 
+// TODO: Add this function into SrsRtpMux class.
+srs_error_t aac_raw_append_adts_header(SrsSharedPtrMessage* shared_audio, SrsFormat* format, SrsBuffer** stream_ptr)
+{
+    srs_error_t err = srs_success;
+
+    if (format->is_aac_sequence_header()) {
+        return err;
+    }
+
+    if (stream_ptr == NULL) {
+        return srs_error_new(ERROR_RTC_RTP_MUXER, "adts");
+    }
+
+    srs_verbose("audio samples=%d", format->audio->nb_samples);
+
+    if (format->audio->nb_samples != 1) {
+        return srs_error_new(ERROR_RTC_RTP_MUXER, "adts");
+    }
+
+    int nb_buf = format->audio->samples[0].size + 7;
+    char* buf = new char[nb_buf];
+    SrsBuffer* stream = new SrsBuffer(buf, nb_buf);
+
+    // TODO: Add comment.
+    stream->write_1bytes(0xFF);
+    stream->write_1bytes(0xF9);
+    stream->write_1bytes(((format->acodec->aac_object - 1) << 6) | ((format->acodec->aac_sample_rate & 0x0F) << 2) | ((format->acodec->aac_channels & 0x04) >> 2));
+    stream->write_1bytes(((format->acodec->aac_channels & 0x03) << 6) | ((nb_buf >> 11) & 0x03));
+    stream->write_1bytes((nb_buf >> 3) & 0xFF);
+    stream->write_1bytes(((nb_buf & 0x07) << 5) | 0x1F);
+    stream->write_1bytes(0xFC);
+
+    stream->write_bytes(format->audio->samples[0].bytes, format->audio->samples[0].size);
+
+    *stream_ptr = stream;
+
+    // FIXME: Debug code, reomve later
+    static int fd = -1;
+    if (fd < 0) {
+        fd = open("test.aac", O_CREAT|O_TRUNC|O_RDWR, 0664);
+    }
+
+    if (fd >= 0) {
+        int nb_write = write(fd, stream->data(), stream->pos());
+        srs_verbose("aac write %d bytes, bin=%s", nb_write, srs_string_dumps_hex(stream->data(), stream->pos()).c_str());
+    }
+
+    return err;
+}
+
 SrsRtpMuxer::SrsRtpMuxer()
 {
     sequence = 0;
@@ -386,6 +436,12 @@ srs_error_t SrsRtp::on_audio(SrsSharedPtrMessage* shared_audio, SrsFormat* forma
     
     // ignore sequence header
     srs_assert(format->audio);
+
+    SrsBuffer* stream = NULL;
+    SrsAutoFree(SrsBuffer, stream);
+    if ((err = aac_raw_append_adts_header(shared_audio, format, &stream)) != srs_success) {
+        return srs_error_wrap(err, "aac append header");
+    }
 
     // TODO: rtc no support aac
     return err;
