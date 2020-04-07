@@ -882,9 +882,12 @@ srs_error_t SrsGoApiRtcPlay::do_serve_http(ISrsHttpResponseWriter* w, ISrsHttpMe
 
     // For client to specifies the EIP of server.
     string eip = r->query_get("eip");
+    // For client to specifies whether encrypt by SRTP.
+    string encrypt = r->query_get("encrypt");
 
-    srs_trace("RTC play %s, api=%s, clientip=%s, app=%s, stream=%s, offer=%dB, eip=%s",
-        streamurl.c_str(), api.c_str(), clientip.c_str(), app.c_str(), stream_name.c_str(), remote_sdp_str.length(), eip.c_str());
+    srs_trace("RTC play %s, api=%s, clientip=%s, app=%s, stream=%s, offer=%dB, eip=%s, encrypt=%s",
+        streamurl.c_str(), api.c_str(), clientip.c_str(), app.c_str(), stream_name.c_str(), remote_sdp_str.length(),
+        eip.c_str(), encrypt.c_str());
 
     // TODO: FIXME: It seems remote_sdp doesn't represents the full SDP information.
     SrsSdp remote_sdp;
@@ -908,6 +911,11 @@ srs_error_t SrsGoApiRtcPlay::do_serve_http(ISrsHttpResponseWriter* w, ISrsHttpMe
     // TODO: FIXME: Maybe need a better name?
     // TODO: FIXME: When server enabled, but vhost disabled, should report error.
     SrsRtcSession* rtc_session = rtc_server->create_rtc_session(request, remote_sdp, local_sdp, eip);
+    if (encrypt.empty()) {
+        rtc_session->set_encrypt(_srs_config->get_rtc_server_encrypt());
+    } else {
+        rtc_session->set_encrypt(encrypt != "false");
+    }
 
     ostringstream os;
     if ((err = local_sdp.encode(os)) != srs_success) {
@@ -1178,7 +1186,7 @@ srs_error_t SrsGoApiRtcPublish::do_serve_http(ISrsHttpResponseWriter* w, ISrsHtt
 
     // TODO: FIXME: Maybe need a better name?
     // TODO: FIXME: When server enabled, but vhost disabled, should report error.
-    SrsRtcSession* rtc_session = rtc_server->create_rtc_session(request, remote_sdp, local_sdp);
+    SrsRtcSession* rtc_session = rtc_server->create_rtc_session(request, remote_sdp, local_sdp, "");
 
     ostringstream os;
     if ((err = local_sdp.encode(os)) != srs_success) {
@@ -2053,6 +2061,7 @@ srs_error_t SrsGoApiTcmalloc::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMess
     srs_error_t err = srs_success;
 
     string page = r->query_get("page");
+    srs_trace("query page=%s", page.c_str());
 
     if (page == "summary") {
         char buffer[32 * 1024];
@@ -2073,6 +2082,14 @@ srs_error_t SrsGoApiTcmalloc::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMess
     obj->set("code", SrsJsonAny::integer(ERROR_SUCCESS));
     SrsJsonObject* data = SrsJsonAny::object();
     obj->set("data", data);
+
+    if (true) {
+        SrsJsonObject* p = SrsJsonAny::object();
+        data->set("query", p);
+
+        p->set("page", SrsJsonAny::str(page.c_str()));
+        p->set("help", SrsJsonAny::str("?page=summary|detail"));
+    }
 
     size_t value = 0;
 
