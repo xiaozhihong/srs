@@ -217,7 +217,9 @@ srs_error_t SrsMediaPayloadType::encode(std::ostringstream& os)
     }
 
     if (! format_specific_param_.empty()) {
-        os << "a=fmtp:" << payload_type_ << " " << format_specific_param_ << kCRLF;
+        os << "a=fmtp:" << payload_type_ << " " << format_specific_param_ 
+           << ";x-google-max-bitrate=6000;x-google-min-bitrate=4000;x-google-start-bitrate=5000" 
+           << kCRLF;
     }
 
     return err;
@@ -334,6 +336,9 @@ srs_error_t SrsMediaDesc::encode(std::ostringstream& os)
     if (rtcp_rsize_) {
         os << "a=rtcp-rsize" << kCRLF;
     }
+
+    // FIXME:bitrate test
+    os << "b=AS:5000000" << kCRLF;
 
     for (std::vector<SrsMediaPayloadType>::iterator iter = payload_types_.begin(); iter != payload_types_.end(); ++iter) {
         if ((err = iter->encode(os)) != srs_success) {

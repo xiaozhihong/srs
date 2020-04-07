@@ -53,6 +53,7 @@ public:
      uint16_t sequence;
      uint32_t ssrc;
      uint16_t payload_type;
+     bool marker;
 public:
     SrsRtpSharedPacket();
     virtual ~SrsRtpSharedPacket();
@@ -61,7 +62,7 @@ public:
     SrsRtpSharedPacket* copy();
 // interface to modify rtp header
 public:
-    srs_error_t set_marker(bool marker);
+    srs_error_t set_marker(bool m);
     srs_error_t set_ssrc(uint32_t ssrc);
     srs_error_t set_payload_type(uint8_t pt);
 };

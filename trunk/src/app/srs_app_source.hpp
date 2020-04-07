@@ -337,7 +337,7 @@ private:
             return ((int16_t)(r - l)) > 0;
         }
     };
-private:
+public:
     std::map<uint16_t, SrsRtpSharedPacket*, SeqComp> pkt_queue;
 public:
     SrsRtpPacketQueue();
@@ -346,6 +346,7 @@ public:
     void clear();
     void push(std::vector<SrsRtpSharedPacket*>& pkts);
     void insert(const uint16_t& sequence, SrsRtpSharedPacket* pkt);
+    size_t size() const { return pkt_queue.size(); }
     SrsRtpSharedPacket* find(const uint16_t& sequence);
 };
 #endif

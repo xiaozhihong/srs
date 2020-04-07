@@ -48,6 +48,7 @@ class SrsRtcServer;
 class SrsRtcSession;
 class SrsSharedPtrMessage;
 class SrsSource;
+class SrsRtpPacketQueue;
 
 const uint8_t kSR   = 200;
 const uint8_t kRR   = 201;
@@ -142,10 +143,37 @@ public:
     virtual void stop_loop();
 public:
     virtual srs_error_t cycle();
-public:
-    void update_sendonly_socket(SrsUdpMuxSocket* ukt);
+public: 
+    void update_sendonly_socket(SrsUdpMuxSocket* ukt); 
 private:
     void send_and_free_messages(SrsSharedPtrMessage** msgs, int nb_msgs, SrsUdpMuxSocket* udp_mux_skt);
+};
+
+class SrsRtcPublisher
+{
+private:
+    SrsRtcSession* rtc_session;
+    uint32_t video_ssrc;
+    uint32_t audio_ssrc;
+private:
+	struct SeqComp
+    {
+        bool operator()(const uint16_t& l, const uint16_t& r) const
+        {
+            return ((int16_t)(r - l)) > 0;
+        }
+    };
+    std::map<uint16_t, SrsRtpSharedPacket*, SeqComp> rtp_audio_queue;
+    std::map<uint16_t, SrsRtpSharedPacket*, SeqComp> rtp_video_queue;
+public:
+    SrsRtcPublisher();
+    virtual ~SrsRtcPublisher();
+public:
+    void initialize(uint32_t vssrc, uint32_t assrc);
+    srs_error_t on_rtp(SrsUdpMuxSocket* udp_mux_skt, char* buf, int nb_buf);
+private:
+    srs_error_t on_audio(SrsUdpMuxSocket* udp_mux_skt, SrsRtpSharedPacket* rtp_pkt);
+    srs_error_t on_video(SrsUdpMuxSocket* udp_mux_skt, SrsRtpSharedPacket* rtp_pkt);
 };
 
 class SrsRtcSession
@@ -167,6 +195,8 @@ private:
 public:
     SrsRequest request;
     SrsSource* source;
+private:
+    SrsRtcPublisher* rtc_publisher;
 public:
     SrsRtcSession(SrsRtcServer* rtc_svr, const SrsRequest& req, const std::string& un, int context_id);
     virtual ~SrsRtcSession();
@@ -189,6 +219,7 @@ public:
 public:
     srs_error_t on_stun(SrsUdpMuxSocket* udp_mux_skt, SrsStunPacket* stun_req);
     srs_error_t on_dtls(SrsUdpMuxSocket* udp_mux_skt);
+    srs_error_t on_rtp(SrsUdpMuxSocket* udp_mux_skt);
     srs_error_t on_rtcp(SrsUdpMuxSocket* udp_mux_skt);
 public:
     srs_error_t send_client_hello(SrsUdpMuxSocket* udp_mux_skt);

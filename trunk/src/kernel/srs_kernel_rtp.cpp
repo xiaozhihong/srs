@@ -55,6 +55,8 @@ SrsRtpSharedPacket::SrsRtpSharedPacket()
     sequence = 0;
     ssrc = 0;
     payload_type = 0;
+
+    marker = false;
 }
 
 SrsRtpSharedPacket::~SrsRtpSharedPacket()
@@ -111,18 +113,20 @@ SrsRtpSharedPacket* SrsRtpSharedPacket::copy()
     return copy;
 }
 
-srs_error_t SrsRtpSharedPacket::set_marker(bool marker)
+srs_error_t SrsRtpSharedPacket::set_marker(bool m)
 {
     srs_error_t err = srs_success;
     if (payload_ptr == NULL || payload_ptr->payload == NULL || payload_ptr->size < 1) {
         return srs_error_new(ERROR_RTC_RTP_MUXER, "rtp payload incorrect");
     }
 
-    if (marker) {
+    if (m) {
         payload_ptr->payload[1] |= kMarker;
     } else {
         payload_ptr->payload[1] &= (~kMarker);
     }
+
+    marker = m;
 
     return err;
 }
