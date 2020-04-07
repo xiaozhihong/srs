@@ -316,6 +316,20 @@ srs_error_t SrsMediaDesc::encode(std::ostringstream& os)
         os << kCRLF;
     }
 
+	// FIXME: extmap test
+	os << "a=extmap:14 urn:ietf:params:rtp-hdrext:toffset" << kCRLF;
+	os << "a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" << kCRLF;
+	os << "a=extmap:13 urn:3gpp:video-orientation" << kCRLF;
+	os << "a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01" << kCRLF;
+	os << "a=extmap:12 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay" << kCRLF;
+	os << "a=extmap:11 http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" << kCRLF;
+	os << "a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing" << kCRLF;
+	os << "a=extmap:8 http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07" << kCRLF;
+	os << "a=extmap:9 http://www.webrtc.org/experiments/rtp-hdrext/color-space" << kCRLF;
+	os << "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid" << kCRLF;
+	os << "a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id" << kCRLF;
+	os << "a=extmap:6 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id" << kCRLF;
+
     if (sendonly_) {
         os << "a=sendonly" << kCRLF;
     }
@@ -386,8 +400,7 @@ srs_error_t SrsMediaDesc::parse_attribute(const std::string& content)
     }
 
     if (attribute == "extmap") {
-        // TODO:We don't parse "extmap" currently.
-        return 0;
+        return parse_attr_extmap(value);
     } else if (attribute == "rtpmap") {
         return parse_attr_rtpmap(value);
     } else if (attribute == "rtcp") {
@@ -419,6 +432,18 @@ srs_error_t SrsMediaDesc::parse_attribute(const std::string& content)
 	} else {
         return session_info_.parse_attribute(attribute, value);
     }
+
+    return err;
+}
+
+srs_error_t SrsMediaDesc::parse_attr_extmap(const std::string& value)
+{
+    srs_error_t err = srs_success;
+
+    // @see: https://tools.ietf.org/html/rfc5285#section-5
+    // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
+    
+    // TODO:We don't parse "extmap" currently.
 
     return err;
 }

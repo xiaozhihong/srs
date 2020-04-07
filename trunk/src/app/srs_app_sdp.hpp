@@ -120,6 +120,7 @@ public:
     bool is_video() const { return type_ == "video"; }
 private:
     srs_error_t parse_attribute(const std::string& content);
+    srs_error_t parse_attr_extmap(const std::string& value);
     srs_error_t parse_attr_rtpmap(const std::string& value);
     srs_error_t parse_attr_rtcp(const std::string& value);
     srs_error_t parse_attr_rtcp_fb(const std::string& value);

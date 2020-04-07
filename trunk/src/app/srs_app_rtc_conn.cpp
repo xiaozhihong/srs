@@ -673,6 +673,16 @@ srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* udp_mux_skt, char* buf, int
 
     if (extensions) {
         // TODO:
+        uint16_t profile_id = stream->read_2bytes();
+        uint16_t extension_length = stream->read_2bytes();
+        // @see: https://tools.ietf.org/html/rfc3550#section-5.3.1
+        stream->skip(extension_length * 4);
+
+        srs_verbose("extensions, profile_id=%u, length=%u", profile_id, extension_length);
+
+        // @see: https://tools.ietf.org/html/rfc5285#section-4.2
+        if (profile_id == 0xBEDE) {
+        }
     }
 
     srs_verbose("recv rtp data, ssrc=%u, payload_type=%u, padding=%d, extensions=%d, cc=%d, marker=%d, sequence=%u, timestamp=%u, payload=%s",
@@ -1154,16 +1164,13 @@ block  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_skt)
 {
+    srs_error_t err = srs_success;
+
     srs_trace("rtc session=%s, connection established", id().c_str());
 
     // FIXME:
     if (true)
     {
-        srs_error_t err = srs_success;
-
-        srs_freep(strd);
-        strd = new SrsRtcSenderThread(this, udp_mux_skt, _srs_context->get_id());
-
         uint32_t video_ssrc = 0;
         uint32_t audio_ssrc = 0;
         uint16_t video_payload_type = 0;
@@ -1181,6 +1188,9 @@ srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_sk
 
         rtc_publisher->initialize(video_ssrc, audio_ssrc);
     }
+
+    srs_freep(strd);
+    strd = new SrsRtcSenderThread(this, udp_mux_skt, _srs_context->get_id());
 
     return start_play(udp_mux_skt);
 }
