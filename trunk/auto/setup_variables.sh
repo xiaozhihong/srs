@@ -4,10 +4,15 @@
 OS_KERNEL_NAME=$(uname -s)
 OS_KERNRL_RELEASE=$(uname -r|awk -F '-' '{print $1}')
 OS_PREFIX="Platform"
+
+# Build platform cache.
 SRS_PLATFORM="${OS_PREFIX}-${OS_KERNEL_NAME}-${OS_KERNRL_RELEASE}"
 if [[ ${SRS_BUILD_TAG} != "" ]]; then
   SRS_PLATFORM="${SRS_PLATFORM}-${SRS_BUILD_TAG}"
 fi
+# Use isolate cache for different SRS version.
+SRS_PLATFORM="${SRS_PLATFORM}-SRS4"
+
 echo "SRS_WORKDIR: ${SRS_WORKDIR}, SRS_OBJS_DIR: ${SRS_OBJS_DIR}, SRS_OBJS: ${SRS_OBJS}, SRS_PLATFORM: ${SRS_PLATFORM}"
 
 # For src object files on each platform.
@@ -23,4 +28,8 @@ echo "SRS_WORKDIR: ${SRS_WORKDIR}, SRS_OBJS_DIR: ${SRS_OBJS_DIR}, SRS_OBJS: ${SR
 if [[ $SRS_CLEAN == NO ]]; then
   echo "Fast cleanup, if need to do full cleanup, please use: make clean"
 fi
+
+# Python or python2, for CentOS8.
+python2 --version >/dev/null 2>&1 && alias python=python2 &&
+echo "Alias python2 as python"
 
