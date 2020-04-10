@@ -88,6 +88,8 @@ private:
     srs_error_t packet_stap_a(const std::string &sps, const std::string& pps, SrsSharedPtrMessage* shared_frame, std::vector<SrsRtpSharedPacket*>& rtp_packet_vec);
 };
 
+
+
 // TODO: FIXME: It's not a muxer, but a transcoder.
 class SrsRtpOpusMuxer
 {
@@ -104,6 +106,15 @@ public:
     srs_error_t frame_to_packet(SrsSharedPtrMessage* shared_audio, SrsFormat* format, SrsBuffer* stream);
 private:
     srs_error_t packet_opus(SrsSharedPtrMessage* shared_frame, SrsSample* sample, std::vector<SrsRtpSharedPacket*>& rtp_packet_vec);
+};
+
+class SrsRtpH264Demuxer
+{
+public:
+    SrsRtpH264Demuxer();
+    virtual ~SrsRtpH264Demuxer();
+public:
+    srs_error_t parse(SrsRtpSharedPacket* rtp_pkt);
 };
 
 class SrsRtc

@@ -53,6 +53,8 @@ using namespace std;
 #include <srs_http_stack.hpp>
 #include <srs_app_http_api.hpp>
 #include <srs_app_statistic.hpp>
+#include <srs_app_pithy_print.hpp>
+#include <srs_app_rtp_queue.hpp>
 
 static bool is_stun(const uint8_t* data, const int size) 
 {
@@ -61,12 +63,12 @@ static bool is_stun(const uint8_t* data, const int size)
 
 static bool is_dtls(const uint8_t* data, size_t len) 
 {
-  	return (len >= 13 && (data[0] > 19 && data[0] < 64));
+      return (len >= 13 && (data[0] > 19 && data[0] < 64));
 }
 
 static bool is_rtp_or_rtcp(const uint8_t* data, size_t len) 
 {
-  	return (len >= 12 && (data[0] & 0xC0) == 0x80);
+      return (len >= 12 && (data[0] & 0xC0) == 0x80);
 }
 
 static bool is_rtcp(const uint8_t* data, size_t len)
@@ -177,7 +179,7 @@ srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
 {
     srs_error_t err = srs_success;
 
-	int ret = SSL_do_handshake(dtls);
+    int ret = SSL_do_handshake(dtls);
 
     uint8_t* out_bio_data;
     int out_bio_len = BIO_get_mem_data(bio_out, &out_bio_data);
@@ -204,10 +206,15 @@ srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
         }   
     }   
 
-    if (out_bio_len) {   
-        if ((err = udp_mux_skt->sendto(out_bio_data, out_bio_len, 0)) != srs_success) {
-            return srs_error_wrap(err, "send dtls packet");
-        }
+    if (out_bio_len) {
+        srs_netfd_t stfd = udp_mux_skt->stfd();
+        sockaddr_in* addr = udp_mux_skt->peer_addr();
+        socklen_t addrlen = udp_mux_skt->peer_addrlen();
+
+        char* buf = new char[out_bio_len];
+        memcpy(buf, out_bio_data, out_bio_len);
+
+        rtc_session->send_and_free_messages(stfd, addr, addrlen, buf, out_bio_len);
     }
 
     return err;
@@ -216,7 +223,7 @@ srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
 srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
 {
     srs_error_t err = srs_success;
-	if (BIO_reset(bio_in) != 1) {
+    if (BIO_reset(bio_in) != 1) {
         return srs_error_new(ERROR_OpenSslBIOReset, "BIO_reset");
     }
     if (BIO_reset(bio_out) != 1) {
@@ -243,13 +250,13 @@ srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
         }
     }
 
-	return err;
+    return err;
 }
 
 srs_error_t SrsDtlsSession::on_dtls_handshake_done(SrsUdpMuxSocket* udp_mux_skt)
 {
     srs_error_t err = srs_success;
-    srs_trace("dtls handshake done");
+    srs_trace("rtc session=%s, DTLS handshake done.", rtc_session->id().c_str());
 
     handshake_done = true;
     if ((err = srtp_initialize()) != srs_success) {
@@ -276,20 +283,20 @@ srs_error_t SrsDtlsSession::srtp_initialize()
 	static const string dtls_srtp_lable = "EXTRACTOR-dtls_srtp";
 	if (! SSL_export_keying_material(dtls, material, sizeof(material), dtls_srtp_lable.c_str(), dtls_srtp_lable.size(), NULL, 0, 0)) {   
         return srs_error_new(ERROR_RTC_SRTP_INIT, "SSL_export_keying_material failed");
-	}   
+    }   
 
-	size_t offset = 0;
+    size_t offset = 0;
 
-	std::string client_master_key(reinterpret_cast<char*>(material), SRTP_MASTER_KEY_KEY_LEN);
-	offset += SRTP_MASTER_KEY_KEY_LEN;
-	std::string server_master_key(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_KEY_LEN);
-	offset += SRTP_MASTER_KEY_KEY_LEN;
-	std::string client_master_salt(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_SALT_LEN);
-	offset += SRTP_MASTER_KEY_SALT_LEN;
-	std::string server_master_salt(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_SALT_LEN);
+    std::string client_master_key(reinterpret_cast<char*>(material), SRTP_MASTER_KEY_KEY_LEN);
+    offset += SRTP_MASTER_KEY_KEY_LEN;
+    std::string server_master_key(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_KEY_LEN);
+    offset += SRTP_MASTER_KEY_KEY_LEN;
+    std::string client_master_salt(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_SALT_LEN);
+    offset += SRTP_MASTER_KEY_SALT_LEN;
+    std::string server_master_salt(reinterpret_cast<char*>(material + offset), SRTP_MASTER_KEY_SALT_LEN);
 
-	client_key = client_master_key + client_master_salt;
-	server_key = server_master_key + server_master_salt;
+    client_key = client_master_key + client_master_salt;
+    server_key = server_master_key + server_master_salt;
 
     if ((err = srtp_send_init()) != srs_success) {
         return srs_error_wrap(err, "srtp send init failed");
@@ -496,7 +503,7 @@ srs_error_t SrsRtcSenderThread::cycle()
 {
     srs_error_t err = srs_success;
 
-	SrsSource* source = NULL;
+    SrsSource* source = NULL;
 
     // TODO: FIXME: Should refactor it, directly use http server as handler.
     ISrsSourceHandler* handler = _srs_hybrid->srs()->instance();
@@ -507,7 +514,7 @@ srs_error_t SrsRtcSenderThread::cycle()
     srs_trace("source url=%s, source_id=[%d][%d], encrypt=%d",
         rtc_session->request.get_stream_url().c_str(), ::getpid(), source->source_id(), rtc_session->encrypt);
 
-	SrsConsumer* consumer = NULL;
+    SrsConsumer* consumer = NULL;
     SrsAutoFree(SrsConsumer, consumer);
     if ((err = source->create_consumer(NULL, consumer)) != srs_success) {
         return srs_error_wrap(err, "rtc create consumer, source url=%s", rtc_session->request.get_stream_url().c_str());
@@ -520,10 +527,22 @@ srs_error_t SrsRtcSenderThread::cycle()
 
     SrsMessageArray msgs(SRS_PERF_MW_MSGS);
 
+    SrsPithyPrint* pprint = SrsPithyPrint::create_rtc_play();
+    SrsAutoFree(SrsPithyPrint, pprint);
+
+    srs_trace("rtc session=%s, start play", rtc_session->id().c_str());
+
     while (true) {
-		if ((err = trd->pull()) != srs_success) {
+        if ((err = trd->pull()) != srs_success) {
             return srs_error_wrap(err, "rtc sender thread");
         }
+
+        pprint->elapse();
+
+        if (pprint->can_print()) {
+            // TODO: FIXME:
+            // Print stat like frame/s, packet/s, loss_packets.
+        } 
 
 #ifdef SRS_PERF_QUEUE_COND_WAIT
         if (realtime) {
@@ -554,7 +573,7 @@ srs_error_t SrsRtcSenderThread::cycle()
 
 void SrsRtcSenderThread::update_sendonly_socket(SrsUdpMuxSocket* ukt) 
 {
-    srs_trace("session %s address changed, update %s -> %s", 
+    srs_trace("rtc session=%s address changed, update %s -> %s", 
         rtc_session->id().c_str(), sendonly_ukt->get_peer_id().c_str(), ukt->get_peer_id().c_str());
 
     srs_freep(sendonly_ukt);
@@ -565,8 +584,11 @@ void SrsRtcSenderThread::send_and_free_messages(SrsSharedPtrMessage** msgs, int 
 {
     srs_error_t err = srs_success;
 
-    vector<mmsghdr> mhdrs;
-	for (int i = 0; i < nb_msgs; i++) {
+    srs_netfd_t stfd = udp_mux_skt->stfd();
+    sockaddr_in* addr = udp_mux_skt->peer_addr();
+    socklen_t addrlen = udp_mux_skt->peer_addrlen();
+
+    for (int i = 0; i < nb_msgs; i++) {
         SrsSharedPtrMessage* msg = msgs[i];
 
         for (int i = 0; i < (int)msg->rtp_packets.size(); ++i) {
@@ -577,14 +599,14 @@ void SrsRtcSenderThread::send_and_free_messages(SrsSharedPtrMessage** msgs, int 
             SrsRtpSharedPacket* pkt = msg->rtp_packets[i];
 
             if (msg->is_video()) {
-                pkt->set_payload_type(video_payload_type);
-                pkt->set_ssrc(video_ssrc);
-                srs_verbose("send video, ssrc=%u, seq=%u, timestamp=%u", video_ssrc, pkt->sequence, pkt->timestamp);
+                pkt->modify_rtp_header_payload_type(video_payload_type);
+                pkt->modify_rtp_header_ssrc(video_ssrc);
+                srs_verbose("send video, ssrc=%u, seq=%u, timestamp=%u", video_ssrc, pkt->rtp_header.sequence, pkt->rtp_header.timestamp);
             }
 
             if (msg->is_audio()) {
-                pkt->set_payload_type(audio_payload_type);
-                pkt->set_ssrc(audio_ssrc);
+                pkt->modify_rtp_header_payload_type(audio_payload_type);
+                pkt->modify_rtp_header_ssrc(audio_ssrc);
             }
 
             int length = pkt->size;
@@ -598,32 +620,23 @@ void SrsRtcSenderThread::send_and_free_messages(SrsSharedPtrMessage** msgs, int 
                 memcpy(buf, pkt->payload, length);
             }
 
-            mmsghdr mhdr;
-            memset(&mhdr, 0, sizeof(mmsghdr));
-            mhdr.msg_hdr.msg_name = (sockaddr_in*)udp_mux_skt->peer_addr();
-            mhdr.msg_hdr.msg_namelen = udp_mux_skt->peer_addrlen();
-            mhdr.msg_hdr.msg_iovlen = 1;
-            mhdr.msg_hdr.msg_iov = new iovec();
-            mhdr.msg_hdr.msg_iov->iov_base = buf;
-            mhdr.msg_hdr.msg_iov->iov_len = length;
-            mhdrs.push_back(mhdr);
+            rtc_session->send_and_free_messages(stfd, addr, addrlen, buf, length);
         }
 
         srs_freep(msg);
-    }
-
-    if ((err = rtc_session->rtc_server->send_and_free_messages(udp_mux_skt->stfd(), mhdrs)) != srs_success) {
-        srs_warn("sendmsg %d msgs, err %s", mhdrs.size(), srs_error_summary(err).c_str());
-        srs_freep(err);
     }
 }
 
 SrsRtcPublisher::SrsRtcPublisher()
 {
+    rtp_h264_demuxer = new SrsRtpH264Demuxer();
+    rtp_video_queue = new SrsRtpQueue(1500);
 }
 
 SrsRtcPublisher::~SrsRtcPublisher()
 {
+    srs_freep(rtp_h264_demuxer);
+    srs_freep(rtp_video_queue);
 }
 
 void SrsRtcPublisher::initialize(uint32_t vssrc, uint32_t assrc)
@@ -636,61 +649,19 @@ void SrsRtcPublisher::initialize(uint32_t vssrc, uint32_t assrc)
 
 srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* udp_mux_skt, char* buf, int nb_buf)
 {
-    SrsBuffer* stream = new SrsBuffer(buf, nb_buf);
-    SrsAutoFree(SrsBuffer, stream);
-
-	/*
-  	  0                   1                   2                   3
-      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |V=2|P|X|  CC   |M|     PT      |       sequence number         |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |                           timestamp                           |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-     |           synchronization source (SSRC) identifier            |
-     +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
-     |            contributing source (CSRC) identifiers             |
-     |                             ....                              |
-     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    */
-
-    uint8_t first = stream->read_1bytes();
-    bool padding = (first & 0x20);
-    bool extensions = (first & 0x10);
-    int cc = (first & 0x0F);
-
-    uint8_t second = stream->read_1bytes();
-    bool marker = (second & 0x80);
-    uint8_t payload_type = (second & 0x7F);
-
-    uint16_t sequence = stream->read_2bytes();
-    uint32_t timestamp = stream->read_4bytes();
-    uint32_t ssrc = stream->read_4bytes();
-
-    for (int i = 0; i < cc; ++i) {
-        uint32_t csrc = stream->read_4bytes();
-    }
-
-    if (extensions) {
-        // TODO:
-        uint16_t profile_id = stream->read_2bytes();
-        uint16_t extension_length = stream->read_2bytes();
-        // @see: https://tools.ietf.org/html/rfc3550#section-5.3.1
-        stream->skip(extension_length * 4);
-
-        srs_verbose("extensions, profile_id=%u, length=%u", profile_id, extension_length);
-
-        // @see: https://tools.ietf.org/html/rfc5285#section-4.2
-        if (profile_id == 0xBEDE) {
-        }
-    }
-
-    srs_verbose("recv rtp data, ssrc=%u, payload_type=%u, padding=%d, extensions=%d, cc=%d, marker=%d, sequence=%u, timestamp=%u, payload=%s",
-        ssrc, payload_type, padding, extensions, cc, marker, sequence, timestamp, srs_string_dumps_hex(buf, nb_buf).c_str());
+    srs_error_t err = srs_success;
 
 	SrsRtpSharedPacket* rtp_shared_pkt = new SrsRtpSharedPacket();
-    rtp_shared_pkt->create(timestamp, sequence, ssrc, payload_type, stream->data() + stream->pos(), stream->size() - stream->pos());        
-    rtp_shared_pkt->marker = marker;
+    if ((err = rtp_shared_pkt->decode(buf, nb_buf)) != srs_success) {
+        return srs_error_wrap(err, "rtp packet decode failed");
+    }
+
+    srs_verbose("recv rtp data, ssrc=%u, payload_type=%u, padding=%d, extensions=%d, cc=%d, marker=%d, sequence=%u, timestamp=%u",
+        rtp_shared_pkt->rtp_header.ssrc, rtp_shared_pkt->rtp_header.payload_type, rtp_shared_pkt->rtp_header.padding, 
+        rtp_shared_pkt->rtp_header.extension, rtp_shared_pkt->rtp_header.cc, rtp_shared_pkt->rtp_header.marker, 
+        rtp_shared_pkt->rtp_header.sequence, rtp_shared_pkt->rtp_header.timestamp);
+
+    uint32_t ssrc = rtp_shared_pkt->rtp_header.ssrc;
 
     if (ssrc == audio_ssrc) {
         return on_audio(udp_mux_skt, rtp_shared_pkt);
@@ -705,123 +676,26 @@ srs_error_t SrsRtcPublisher::on_audio(SrsUdpMuxSocket* udp_mux_skt, SrsRtpShared
 {
     srs_error_t err = srs_success;
 
-    /*
-    rtp_audio_queue.insert(make_pair(rtp_pkt->sequence, rtp_pkt->copy()));
-
-    if (rtp_pkt->marker) {
-        uint16_t start_seq = rtp_audio_queue.begin()->first;
-        uint16_t end_seq = rtp_audio_queue.rbegin()->first;
-
-        int num_of_packet = abs((int)end_seq - (int)start_seq);
-        if (num_of_packet != rtp_audio_queue.size()) {
-            return srs_error_new(ERROR_RTC_RTP, "loss audio packet");
-        }
-
-        rtp_audio_queue.clear();
-        srs_verbose("collect %d packet to audio frame, seq=[%u-%u]", num_of_packet, start_seq, end_seq);
-    }
-    */
-
     return err;
-}
-
-static int test_fd = -1;
-static uint8_t kStartCode[4] = {0x00, 0x00, 0x00, 0x01};
-
-void write_to_test_fd(int fd, const void* buf, int len)
-{
-    //srs_verbose("write to fd=%d, %s", fd, srs_string_dumps_hex((const char*)buf, len).c_str());
-    write(fd, buf, len);
 }
 
 srs_error_t SrsRtcPublisher::on_video(SrsUdpMuxSocket* udp_mux_skt, SrsRtpSharedPacket* rtp_pkt)
 {
     srs_error_t err = srs_success;
 
-    rtp_video_queue.insert(make_pair(rtp_pkt->sequence, rtp_pkt->copy()));
+    if ((err = rtp_h264_demuxer->parse(rtp_pkt)) != srs_success) {
+        return srs_error_wrap(err, "rtp h264 demux failed");
+    }
 
-    if (rtp_pkt->marker) {
-        uint16_t start_seq = rtp_video_queue.begin()->first;
-        uint16_t end_seq = rtp_video_queue.rbegin()->first;
+    rtp_video_queue->insert(rtp_pkt);
 
-        int num_of_packet = start_seq <= end_seq ? (end_seq - start_seq + 1) : (UINT16_MAX - start_seq + 1 + 1 + end_seq);
-        int size = rtp_video_queue.size();
-        if (num_of_packet != size) {
-            rtp_video_queue.clear();
-            return srs_error_new(ERROR_RTC_RTP, "loss video packet, except %d, have %d packet, seq range=[%u-%u]", 
-                        num_of_packet, size, start_seq, end_seq);
+    std::vector<std::vector<SrsRtpSharedPacket*> > frames;
+    rtp_video_queue->get_and_clean_collected_frames(frames);
+
+    for (int i = 0; i < frames.size(); ++i) {
+        srs_verbose("collect %d frames, seq range %u,%u", frames.size(), frames[i].front()->rtp_header.sequence, frames[i].back()->rtp_header.sequence);
+        for (int n = 0; n < frames[i].size(); ++n) {
         }
-
-        srs_verbose("collect %d packet to video frame, seq=[%u-%u]", num_of_packet, start_seq, end_seq);
-
-        if (test_fd < 0) {
-            test_fd = open("dump.264", O_CREAT|O_TRUNC|O_RDWR, 0664);
-        }
-
-        bool fu_a_first = true;
-        for (map<uint16_t, SrsRtpSharedPacket*>::iterator iter = rtp_video_queue.begin(); iter != rtp_video_queue.end(); ++iter) {
-            SrsRtpSharedPacket* pkt = iter->second;
-
-            uint8_t* p = reinterpret_cast<uint8_t*>(pkt->payload);
-            int len = pkt->size;
-
-            uint8_t nal_type = p[0] & kNalTypeMask;
-
-            srs_verbose("seq=%u, rtc video=%s", iter->first, srs_string_dumps_hex(reinterpret_cast<const char*>(p), len).c_str());
-
-            if (nal_type >= 1 && nal_type <= 23) {
-                srs_verbose("single nalu");
-                if (nal_type != 9 && nal_type != 6) {
-                    write_to_test_fd(test_fd, kStartCode, sizeof(kStartCode));
-                    write_to_test_fd(test_fd, p, len);
-                }
-            } else if (nal_type == kFuA) {
-                srs_verbose("fu-a");
-#if 1
-                if ((p[1] & kStart) || ((! (p[1] & kEnd)) && fu_a_first)) {
-                    fu_a_first = false;
-                    uint8_t nal_header = (p[0] & (~kNalTypeMask)) | (p[1] & kNalTypeMask);
-                    write_to_test_fd(test_fd, kStartCode, sizeof(kStartCode));
-                    write_to_test_fd(test_fd, &(nal_header), 1);
-                }
-                if (p[1] & kEnd) {
-                    fu_a_first = true;
-                }
-#else
-                if ((p[1] & kStart)) {
-                    uint8_t nal_header = (p[0] & (~kNalTypeMask)) | (p[1] & kNalTypeMask);
-                    write_to_test_fd(test_fd, kStartCode, sizeof(kStartCode));
-                    write_to_test_fd(test_fd, &(nal_header), 1);
-                }
-#endif
-                write_to_test_fd(test_fd, pkt->payload + 2, pkt->size - 2);
-            } else if (nal_type == kStapA) {
-                srs_verbose("stap-a");
-                int i = 1;
-                while (i < pkt->size) {
-                    srs_verbose("stap-a cur index=%s", srs_string_dumps_hex(pkt->payload + i, 2).c_str());
-                    uint16_t nal_len = (p[i]) << 8 | p[i + 1];
-                    if (nal_len > len - i) {
-                        rtp_video_queue.clear();
-                        return srs_error_new(ERROR_RTC_RTP, "invalid stap-a packet, nal len=%u, i=%d, len=%d", nal_len, i, len);
-                    }
-
-                    uint8_t sub_nal_type = p[i + 2] & kNalTypeMask;
-                    if (sub_nal_type != 9 && sub_nal_type != 6) {
-                        write_to_test_fd(test_fd, kStartCode, sizeof(kStartCode));
-                        write_to_test_fd(test_fd, p + i + 2, nal_len);
-                    }
-
-                    i += nal_len + 2;
-                }
-
-                srs_assert(i == len);
-            } else {
-                srs_assert(false);
-            }
-        }
-
-        rtp_video_queue.clear();
     }
 
     return err;
@@ -847,6 +721,9 @@ SrsRtcSession::SrsRtcSession(SrsRtcServer* rtc_svr, const SrsRequest& req, const
     rtc_publisher = new SrsRtcPublisher();
 
     encrypt = true;
+
+    // TODO: FIXME: Support reload.
+    sessionStunTimeout = _srs_config->get_rtc_stun_timeout(req.vhost);
 }
 
 SrsRtcSession::~SrsRtcSession()
@@ -919,14 +796,14 @@ srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* udp_mux_skt, SrsS
 {
     srs_error_t err = srs_success;
 
-    if (stun_req->get_ice_controlled()) {
+    bool strict_check = _srs_config->get_rtc_stun_strict_check(request.vhost);
+    if (strict_check && stun_req->get_ice_controlled()) {
+        // @see: https://tools.ietf.org/html/draft-ietf-ice-rfc5245bis-00#section-6.1.3.1
+        // TODO: Send 487 (Role Conflict) error response.
         return srs_error_new(ERROR_RTC_STUN, "Peer must not in ice-controlled role in ice-lite mode.");
     }
 
     SrsStunPacket stun_binding_response;
-    char buf[1460];
-    SrsBuffer* stream = new SrsBuffer(buf, sizeof(buf));
-    SrsAutoFree(SrsBuffer, stream);
 
     stun_binding_response.set_message_type(BindingResponse);
     stun_binding_response.set_local_ufrag(stun_req->get_remote_ufrag());
@@ -936,19 +813,25 @@ srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* udp_mux_skt, SrsS
     stun_binding_response.set_mapped_address(be32toh(inet_addr(udp_mux_skt->get_peer_ip().c_str())));
     stun_binding_response.set_mapped_port(udp_mux_skt->get_peer_port());
 
+    char* buf = new char[1460];
+    SrsBuffer* stream = new SrsBuffer(buf, 1460);
+    SrsAutoFree(SrsBuffer, stream);
+
     if ((err = stun_binding_response.encode(get_local_sdp()->get_ice_pwd(), stream)) != srs_success) {
         return srs_error_wrap(err, "stun binding response encode failed");
     }
 
-    if ((err = udp_mux_skt->sendto(stream->data(), stream->pos(), 0)) != srs_success) {
-        return srs_error_wrap(err, "stun binding response send failed");
-    }
+    srs_netfd_t stfd = udp_mux_skt->stfd();
+    sockaddr_in* addr = udp_mux_skt->peer_addr();
+    socklen_t addrlen = udp_mux_skt->peer_addrlen();
+    send_and_free_messages(stfd, addr, addrlen, buf, stream->pos());
 
     if (get_session_state() == WAITING_STUN) {
-        set_session_state(DOING_DTLS_HANDSHAKE);
-
         peer_id = udp_mux_skt->get_peer_id();
         rtc_server->insert_into_id_sessions(peer_id, this);
+
+        set_session_state(DOING_DTLS_HANDSHAKE);
+        srs_trace("rtc session=%s, STUN done, waitting DTLS handshake.", id().c_str());
     }
 
     return err;
@@ -967,7 +850,7 @@ srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSock
 
     // @see: https://tools.ietf.org/html/rfc4585#section-6.1
     /*
-		0                   1                   2                   3
+        0                   1                   2                   3
         0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
        |V=2|P|   FMT   |       PT      |          length               |
@@ -990,12 +873,12 @@ srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSock
     /*uint32_t ssrc_of_media_source = */stream->read_4bytes();
 
     /*
-		 0                   1                   2                   3
+         0                   1                   2                   3
          0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
         |            PID                |             BLP               |
         +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-	*/
+    */
 
     uint16_t pid = stream->read_2bytes();
     int blp = stream->read_2bytes();
@@ -1033,13 +916,16 @@ srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSock
 
     for (int i = 0; i < (int)resend_pkts.size(); ++i) {
         if (dtls_session) {
-            char protected_buf[kRtpPacketSize];
+            char* protected_buf = new char[kRtpPacketSize];
             int nb_protected_buf = resend_pkts[i]->size;
 
-            srs_verbose("resend pkt sequence=%u", resend_pkts[i]->sequence);
+            srs_verbose("resend pkt sequence=%u", resend_pkts[i]->rtp_header.sequence);
+            dtls_session->protect_rtp(protected_buf, resend_pkts[i]->payload, nb_protected_buf);
 
-            dtls_session->protect_rtp(protected_buf,resend_pkts[i]->payload, nb_protected_buf);
-            udp_mux_skt->sendto(protected_buf, nb_protected_buf, 0);
+            srs_netfd_t stfd = udp_mux_skt->stfd();
+            sockaddr_in* addr = udp_mux_skt->peer_addr();
+            socklen_t addrlen = udp_mux_skt->peer_addrlen();
+            send_and_free_messages(stfd, addr, addrlen, protected_buf, nb_protected_buf);
         }
     }
 
@@ -1106,7 +992,7 @@ srs_error_t SrsRtcSession::on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdp
 
     // @see: https://tools.ietf.org/html/rfc3550#section-6.4.2
     /*
-		0                   1                   2                   3
+        0                   1                   2                   3
         0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 header |V=2|P|    RC   |   PT=RR=201   |             length            |
@@ -1189,8 +1075,8 @@ srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_sk
         rtc_publisher->initialize(video_ssrc, audio_ssrc);
     }
 
-    srs_freep(strd);
-    strd = new SrsRtcSenderThread(this, udp_mux_skt, _srs_context->get_id());
+    srs_trace("rtc session=%s, timeout=%dms connection established", id().c_str(), srsu2msi(sessionStunTimeout));
+    set_session_state(ESTABLISHED);
 
     return start_play(udp_mux_skt);
 }
@@ -1226,6 +1112,11 @@ srs_error_t SrsRtcSession::start_play(SrsUdpMuxSocket* udp_mux_skt)
     }
 
     return err;
+}
+
+bool SrsRtcSession::is_stun_timeout()
+{
+    return last_stun_time + sessionStunTimeout < srs_get_system_time();
 }
 
 srs_error_t SrsRtcSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
@@ -1318,6 +1209,11 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
     }
 
     return err;
+}
+
+void SrsRtcSession::send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length)
+{
+    rtc_server->send_and_free_messages(stfd, addr, addrlen, buf, length);
 }
 
 SrsRtcServer::SrsRtcServer()
@@ -1563,7 +1459,7 @@ void SrsRtcServer::check_and_clean_timeout_session()
             // to make all logs write to the "correct" pid+cid.
             session->switch_to_context();
 
-            srs_trace("rtc session=%s, stun timeout", session->id().c_str());
+            srs_trace("rtc session=%s, STUN timeout", session->id().c_str());
             map_username_session.erase(iter++);
             map_id_session.erase(session->get_peer_id());
             delete session;
@@ -1580,19 +1476,25 @@ srs_error_t SrsRtcServer::notify(int type, srs_utime_t interval, srs_utime_t tic
     return srs_success;
 }
 
-srs_error_t SrsRtcServer::send_and_free_messages(srs_netfd_t stfd, const vector<mmsghdr>& msgs)
+void SrsRtcServer::send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length)
 {
-    srs_error_t err = srs_success;
-
     mmstfd = stfd;
-    mmhdrs.insert(mmhdrs.end(), msgs.begin(), msgs.end());
+
+    mmsghdr mhdr;
+    memset(&mhdr, 0, sizeof(mhdr));
+
+    mhdr.msg_hdr.msg_name = addr;
+    mhdr.msg_hdr.msg_namelen = addrlen;
+    mhdr.msg_hdr.msg_iovlen = 1;
+    mhdr.msg_hdr.msg_iov = new iovec();
+    mhdr.msg_hdr.msg_iov->iov_base = buf;
+    mhdr.msg_hdr.msg_iov->iov_len = length;
+    mmhdrs.push_back(mhdr);
 
     if (waiting_msgs) {
         waiting_msgs = false;
         srs_cond_signal(cond);
     }
-
-    return err;
 }
 
 void SrsRtcServer::free_messages(vector<mmsghdr>& hdrs)
@@ -1631,8 +1533,8 @@ srs_error_t SrsRtcServer::cycle()
             srs_cond_wait(cond);
         }
 
-        vector<mmsghdr> mhdrs = mmhdrs;
-        mmhdrs.clear();
+        vector<mmsghdr> mhdrs;
+        mmhdrs.swap(mhdrs);
 
         mmsghdr* p = &mhdrs[0];
         for (mmsghdr* end = p + mhdrs.size(); p < end; p += max_sendmmsg) {

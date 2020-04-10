@@ -48,7 +48,8 @@ class SrsRtcServer;
 class SrsRtcSession;
 class SrsSharedPtrMessage;
 class SrsSource;
-class SrsRtpPacketQueue;
+class SrsRtpQueue;
+class SrsRtpH264Demuxer;
 
 const uint8_t kSR   = 200;
 const uint8_t kRR   = 201;
@@ -66,8 +67,6 @@ const uint8_t kSLI  = 2;
 const uint8_t kRPSI = 3;
 const uint8_t kAFB  = 15;
 
-const srs_utime_t kSrsRtcSessionStunTimeoutUs = 10*1000*1000LL;
-
 enum SrsRtcSessionStateType
 {
     // TODO: FIXME: Should prefixed by enum name.
@@ -83,7 +82,7 @@ class SrsDtlsSession
 private:
     SrsRtcSession* rtc_session;
 
-	SSL* dtls;
+    SSL* dtls;
     BIO* bio_in;
     BIO* bio_out;
 
@@ -156,15 +155,8 @@ private:
     uint32_t video_ssrc;
     uint32_t audio_ssrc;
 private:
-	struct SeqComp
-    {
-        bool operator()(const uint16_t& l, const uint16_t& r) const
-        {
-            return ((int16_t)(r - l)) > 0;
-        }
-    };
-    std::map<uint16_t, SrsRtpSharedPacket*, SeqComp> rtp_audio_queue;
-    std::map<uint16_t, SrsRtpSharedPacket*, SeqComp> rtp_video_queue;
+    SrsRtpH264Demuxer* rtp_h264_demuxer;
+    SrsRtpQueue* rtp_video_queue;
 public:
     SrsRtcPublisher();
     virtual ~SrsRtcPublisher();
@@ -197,6 +189,8 @@ private:
     //      Sepcifies by HTTP API, query encrypt, optional.
     // TODO: FIXME: Support reload.
     bool encrypt;
+    // The timeout of session, keep alive by STUN ping pong.
+    srs_utime_t sessionStunTimeout;
 public:
     SrsRequest request;
     SrsSource* source;
@@ -233,7 +227,7 @@ public:
     srs_error_t on_connection_established(SrsUdpMuxSocket* udp_mux_skt);
     srs_error_t start_play(SrsUdpMuxSocket* udp_mux_skt);
 public:
-    bool is_stun_timeout() { return last_stun_time + kSrsRtcSessionStunTimeoutUs < srs_get_system_time(); }
+    bool is_stun_timeout();
 private:
     srs_error_t check_source();
 private:
@@ -242,6 +236,9 @@ private:
     srs_error_t on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt);
     srs_error_t on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt);
     srs_error_t on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt);
+// Internal only.
+public:
+    void send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length);
 };
 
 class SrsRtcServer : virtual public ISrsUdpMuxHandler, virtual public ISrsHourGlass, virtual public ISrsCoroutineHandler
@@ -286,7 +283,7 @@ public:
     virtual srs_error_t notify(int type, srs_utime_t interval, srs_utime_t tick);
 // Internal only.
 public:
-    srs_error_t send_and_free_messages(srs_netfd_t stfd, const std::vector<mmsghdr>& msgs);
+    void send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length);
     void free_messages(std::vector<mmsghdr>& hdrs);
     virtual srs_error_t cycle();
 };

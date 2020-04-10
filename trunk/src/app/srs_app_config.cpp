@@ -2144,28 +2144,15 @@ srs_error_t SrsConfig::global_to_json(SrsJsonObject* obj)
                     sobj->set(sdir->name, sdir->dumps_arg0_to_integer());
                 } else if (sdir->name == "rtp_idle_timeout") {
                     sobj->set(sdir->name, sdir->dumps_arg0_to_integer());
-                } else if (sdir->name == "ack_timeout") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_integer());
-                } else if (sdir->name == "keepalive_timeout") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_integer());
                 } else if (sdir->name == "audio_enable") {
                     sobj->set(sdir->name, sdir->dumps_arg0_to_boolean());
                 } else if (sdir->name == "host") {
                     sobj->set(sdir->name, sdir->dumps_arg0_to_str());
-                } else if (sdir->name == "serial") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_str());
-                } else if (sdir->name == "realm") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_str());
                 } else if (sdir->name == "wait_keyframe") {
                     sobj->set(sdir->name, sdir->dumps_arg0_to_str());
-                } else if (sdir->name == "print_sip_message") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_str());
-                } else if (sdir->name == "invite_port_fixed") {
-                    sobj->set(sdir->name, sdir->dumps_arg0_to_str());
-                } else if (sdir->name == "auto_play") {
+                } else if (sdir->name == "auto_create_channel") {
                     sobj->set(sdir->name, sdir->dumps_arg0_to_str());
                 }
-
             }
             obj->set(dir->name, sobj);
         } else {
@@ -3691,18 +3678,15 @@ srs_error_t SrsConfig::check_normal_config()
                 && n != "listen" && n != "rtp_port_min" && n != "rtp_port_max"
                 && n != "rtp_idle_timeout" && n != "sip"
                 && n != "audio_enable" && n != "wait_keyframe"
-                && n != "host") {
+                && n != "host" && n != "auto_create_channel") {
                 return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal stream_caster.%s", n.c_str());
             }
 
             if (n == "sip") {
                 for (int j = 0; j < (int)conf->directives.size(); j++) {
                     string m = conf->at(j)->name;
-                    if (m != "enabled"  && m != "listen"
-                        && m != "ack_timeout" && m != "keepalive_timeout"
-                        && m != "host" && m != "serial" && m != "realm"
-                        && m != "print_sip_message" && m != "auto_play"
-                        && m != "invite_port_fixed") {
+                    if (m != "enabled"  && m != "listen" && m != "ack_timeout" && m != "keepalive_timeout"
+                        && m != "host" && m != "serial" && m != "realm" && m != "auto_play" && m != "invite_port_fixed") {
                         return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal stream_caster.%s", m.c_str());
                     }
                 }
@@ -3876,7 +3860,7 @@ srs_error_t SrsConfig::check_normal_config()
             } else if (n == "rtc") {
                 for (int j = 0; j < (int)conf->directives.size(); j++) {
                     string m = conf->at(j)->name;
-                    if (m != "enabled" && m != "bframe" && m != "aac") {
+                    if (m != "enabled" && m != "bframe" && m != "aac" && m != "stun_timeout" && m != "stun_strict_check") {
                         return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal vhost.rtc.%s of %s", m.c_str(), vhost->arg0().c_str());
                     }
                 }
@@ -4359,9 +4343,9 @@ srs_utime_t SrsConfig::get_stream_caster_gb28181_rtp_idle_timeout(SrsConfDirecti
     return (srs_utime_t)(::atoi(conf->arg0().c_str()) * SRS_UTIME_SECONDS);
 }
 
-int SrsConfig::get_stream_caster_gb28181_ack_timeout(SrsConfDirective* conf)
+srs_utime_t SrsConfig::get_stream_caster_gb28181_ack_timeout(SrsConfDirective* conf)
 {
-    static int DEFAULT = 30;
+    static srs_utime_t DEFAULT = 30 * SRS_UTIME_SECONDS;
 
     if (!conf) {
         return DEFAULT;
@@ -4377,12 +4361,13 @@ int SrsConfig::get_stream_caster_gb28181_ack_timeout(SrsConfDirective* conf)
         return DEFAULT;
     }
 
-    return ::atoi(conf->arg0().c_str());
+    return  (srs_utime_t)(::atoi(conf->arg0().c_str()) * SRS_UTIME_SECONDS);
 }
 
-int SrsConfig::get_stream_caster_gb28181_keepalive_timeout(SrsConfDirective* conf)
+srs_utime_t SrsConfig::get_stream_caster_gb28181_keepalive_timeout(SrsConfDirective* conf)
 {
-    static int DEFAULT = 120;
+    static srs_utime_t DEFAULT = 120 * SRS_UTIME_SECONDS;
+
 
     if (!conf) {
         return DEFAULT;
@@ -4398,19 +4383,25 @@ int SrsConfig::get_stream_caster_gb28181_keepalive_timeout(SrsConfDirective* con
         return DEFAULT;
     }
 
-    return ::atoi(conf->arg0().c_str());
+    return (srs_utime_t)(::atoi(conf->arg0().c_str()) * SRS_UTIME_SECONDS);
 }
 
 string SrsConfig::get_stream_caster_gb28181_host(SrsConfDirective* conf)
 {
-    static string DEFAULT = "";
-
-    if (!conf) {
-        return DEFAULT;
-    }
+    static string DEFAULT = "*";
 
     conf = conf->get("host");
     if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    string eip = srs_getenv(conf->arg0());
+    if (!eip.empty()) {
+        return eip;
+    }
+
+    // If configed as ENV, but no ENV set, use default value.
+    if (srs_string_starts_with(conf->arg0(), "$")) {
         return DEFAULT;
     }
 
@@ -4468,27 +4459,6 @@ bool SrsConfig::get_stream_caster_gb28181_audio_enable(SrsConfDirective* conf)
     }
 
     conf = conf->get("audio_enable");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return SRS_CONF_PERFER_FALSE(conf->arg0());
-}
-
-bool SrsConfig::get_stream_caster_gb28181_print_sip_message(SrsConfDirective* conf)
-{
-    static bool DEFAULT = false;
-
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("sip");
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("print_sip_message");
     if (!conf || conf->arg0().empty()) {
         return DEFAULT;
     }
@@ -4597,6 +4567,22 @@ bool SrsConfig::get_stream_caster_gb28181_sip_invite_port_fixed(SrsConfDirective
 
     return SRS_CONF_PERFER_FALSE(conf->arg0());
 
+}
+
+bool SrsConfig::get_stream_caster_gb28181_auto_create_channel(SrsConfDirective* conf)
+{
+    static bool DEFAULT = false;
+
+    if (!conf) {
+        return DEFAULT;
+    }
+   
+    conf = conf->get("auto_create_channel");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
 }
 
 int SrsConfig::get_rtc_server_enabled()
@@ -4778,6 +4764,42 @@ bool SrsConfig::get_rtc_aac_discard(string vhost)
     }
 
     return conf->arg0() == "discard";
+}
+
+srs_utime_t SrsConfig::get_rtc_stun_timeout(string vhost)
+{
+    static srs_utime_t DEFAULT = 30 * SRS_UTIME_SECONDS;
+
+    SrsConfDirective* conf = get_rtc(vhost);
+
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("stun_timeout");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return (srs_utime_t)(::atoi(conf->arg0().c_str()) * SRS_UTIME_SECONDS);
+}
+
+bool SrsConfig::get_rtc_stun_strict_check(string vhost)
+{
+    static bool DEFAULT = false;
+
+    SrsConfDirective* conf = get_rtc(vhost);
+
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("stun_strict_check");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
 }
 
 SrsConfDirective* SrsConfig::get_vhost(string vhost, bool try_default_vhost)

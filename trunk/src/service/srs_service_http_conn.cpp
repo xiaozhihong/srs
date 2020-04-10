@@ -139,7 +139,8 @@ srs_error_t SrsHttpParser::parse_message_imp(ISrsReader* reader)
 	                }
 	            }
 	        }
-            srs_info("size=%d, nparsed=%d, consumed=%d", buffer->size(), (int)nparsed, consumed);
+            
+            srs_info("size=%d, nparsed=%d", buffer->size(), (int)consumed);
 
 	        // Only consume the header bytes.
             buffer->read_slice(consumed);

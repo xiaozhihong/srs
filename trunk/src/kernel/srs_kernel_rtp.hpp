@@ -28,43 +28,87 @@
 
 #include <string>
 
-const uint8_t kMarker = 0x80;
+const int kRtpHeaderFixedSize = 12;
+const uint8_t kRtpMarker = 0x80;
+
+class SrsBuffer;
+
+class SrsRtpHeader
+{
+public:
+    bool padding;
+    uint8_t padding_length;
+    bool extension;
+    uint8_t cc;
+    bool marker;
+    uint8_t payload_type;
+    uint16_t sequence;
+    int64_t timestamp;
+    uint32_t ssrc;
+    uint32_t csrc[15];
+    uint16_t extension_length;
+    // TODO:extension field.
+public:
+    SrsRtpHeader();
+    virtual ~SrsRtpHeader();
+    SrsRtpHeader(const SrsRtpHeader& rhs);
+    SrsRtpHeader& operator=(const SrsRtpHeader& rhs);
+public:
+    srs_error_t decode(SrsBuffer* stream);
+    srs_error_t encode(SrsBuffer* stream);
+public:
+    size_t header_size();
+public:
+};
+
+class SrsRtpVideoHeader
+{
+public:
+    bool is_first_packet_of_frame;
+    bool is_last_packet_of_frame;
+public:
+    SrsRtpVideoHeader();
+    virtual ~SrsRtpVideoHeader();
+    SrsRtpVideoHeader(const SrsRtpVideoHeader& rhs);
+    SrsRtpVideoHeader& operator=(const SrsRtpVideoHeader& rhs);
+};
 
 class SrsRtpSharedPacket
 {
 private:
-     class SrsRtpSharedPacketPayload 
-     {   
-     public:
-         char* payload;
-         int size;
-         int shared_count;
-     public:
-         SrsRtpSharedPacketPayload();
-         virtual ~SrsRtpSharedPacketPayload();
-     };  
+    class SrsRtpSharedPacketPayload 
+    {   
+    public:
+        // Rtp packet buffer, include rtp header and payload.
+        char* payload;
+        int size;
+        int shared_count;
+    public:
+        SrsRtpSharedPacketPayload();
+        virtual ~SrsRtpSharedPacketPayload();
+    };  
 private:
-     SrsRtpSharedPacketPayload* payload_ptr;
+    SrsRtpSharedPacketPayload* payload_ptr;
 public:
-     char* payload;
-     int size;
-public:
-     int64_t timestamp;
-     uint16_t sequence;
-     uint32_t ssrc;
-     uint16_t payload_type;
-     bool marker;
+    SrsRtpHeader rtp_header;
+    SrsRtpVideoHeader rtp_video_header;
+    char* payload;
+    int size;
 public:
     SrsRtpSharedPacket();
     virtual ~SrsRtpSharedPacket();
 public:
-    srs_error_t create(int64_t t, uint16_t seq, uint32_t sc, uint16_t pt, char* p, int s);
+    srs_error_t create(int64_t timestamp, uint16_t sequence, uint32_t ssrc, uint16_t payload_type, char* payload, int size);
+    srs_error_t decode(char* buf, int nb_buf);
     SrsRtpSharedPacket* copy();
-// interface to modify rtp header
 public:
-    srs_error_t set_marker(bool m);
-    srs_error_t set_ssrc(uint32_t ssrc);
-    srs_error_t set_payload_type(uint8_t pt);
+    char* rtp_payload() { return payload + rtp_header.header_size(); }
+    int rtp_payload_size() { return size - rtp_header.header_size() - rtp_header.padding_length; }
+// Interface to modify rtp header 
+public:
+    srs_error_t modify_rtp_header_marker(bool marker);
+    srs_error_t modify_rtp_header_ssrc(uint32_t ssrc);
+    srs_error_t modify_rtp_header_payload_type(uint8_t payload_type);
 };
 
 #endif

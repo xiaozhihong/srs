@@ -76,11 +76,11 @@ srs_error_t parse_h264_fmtp(const std::string& fmtp, H264SpecificParam& h264_par
         std::vector<std::string> kv = split_str(vec[i], "=");
         if (kv.size() == 2) {
             if (kv[0] == "profile-level-id") {
-                h264_param.profile_level_id = atoi(kv[1].c_str());
+                h264_param.profile_level_id = kv[1];
             } else if (kv[0] == "packetization-mode") {
-                h264_param.packetization_mode = atoi(kv[1].c_str());
+                h264_param.packetization_mode = kv[1];
             } else if (kv[0] == "level-asymmetry-allowed") {
-                h264_param.level_asymmerty_allow = atoi(kv[1].c_str());
+                h264_param.level_asymmerty_allow = kv[1];
             } else {
                 return srs_error_new(ERROR_RTC_SDP_DECODE, "invalid h264 param=%s", kv[0].c_str());
             }
@@ -380,6 +380,8 @@ srs_error_t SrsMediaDesc::encode(std::ostringstream& os)
            << iter->ip_ << " " << iter->port_
            << " typ " << iter->type_ 
            << " generation 0" << kCRLF;
+
+        srs_trace("local SDP candidate line=%s", os.str().c_str());
     }
 
     return err;
@@ -671,7 +673,7 @@ srs_error_t SrsSdp::parse(const std::string& sdp_str)
     std::istringstream is(sdp_str);
     std::string line;
     while (getline(is, line)) {
-        srs_trace("%s", line.c_str());
+        srs_verbose("%s", line.c_str());
         if (line.size() < 2 || line[1] != '=') {
             return srs_error_new(ERROR_RTC_SDP_DECODE, "invalid sdp line=%s", line.c_str());
         }

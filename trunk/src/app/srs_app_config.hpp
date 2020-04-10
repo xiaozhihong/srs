@@ -503,18 +503,18 @@ public:
     virtual int get_stream_caster_rtp_port_max(SrsConfDirective* conf);
 
     virtual srs_utime_t get_stream_caster_gb28181_rtp_idle_timeout(SrsConfDirective* conf);
-    virtual int get_stream_caster_gb28181_ack_timeout(SrsConfDirective* conf);
-    virtual int get_stream_caster_gb28181_keepalive_timeout(SrsConfDirective* conf);
+    virtual srs_utime_t get_stream_caster_gb28181_ack_timeout(SrsConfDirective* conf);
+    virtual srs_utime_t get_stream_caster_gb28181_keepalive_timeout(SrsConfDirective* conf);
     virtual bool get_stream_caster_gb28181_audio_enable(SrsConfDirective* conf);
     virtual std::string get_stream_caster_gb28181_host(SrsConfDirective* conf);
     virtual std::string get_stream_caster_gb28181_serial(SrsConfDirective* conf);
     virtual std::string get_stream_caster_gb28181_realm(SrsConfDirective* conf);
-    virtual bool get_stream_caster_gb28181_print_sip_message(SrsConfDirective* conf);
     virtual bool get_stream_caster_gb28181_wait_keyframe(SrsConfDirective* conf);
     virtual bool get_stream_caster_gb28181_sip_enable(SrsConfDirective* conf);
     virtual bool get_stream_caster_gb28181_sip_auto_play(SrsConfDirective* conf);
     virtual int get_stream_caster_gb28181_sip_listen(SrsConfDirective* conf);
     virtual bool get_stream_caster_gb28181_sip_invite_port_fixed(SrsConfDirective* conf);
+    virtual bool get_stream_caster_gb28181_auto_create_channel(SrsConfDirective* conf);
 
 // rtc section
 public:
@@ -530,6 +530,8 @@ public:
     bool get_rtc_enabled(std::string vhost);
     bool get_rtc_bframe_discard(std::string vhost);
     bool get_rtc_aac_discard(std::string vhost);
+    srs_utime_t get_rtc_stun_timeout(std::string vhost);
+    bool get_rtc_stun_strict_check(std::string vhost);
 
 // vhost specified section
 public:
