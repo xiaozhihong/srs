@@ -175,7 +175,7 @@ srs_error_t SrsDtlsSession::initialize(const SrsRequest& req)
     return err;
 }
 
-srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -187,7 +187,7 @@ srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
     int ssl_err = SSL_get_error(dtls, ret); 
     switch(ssl_err) {   
         case SSL_ERROR_NONE: {   
-            if ((err = on_dtls_handshake_done(udp_mux_skt)) != srs_success) {
+            if ((err = on_dtls_handshake_done(skt)) != srs_success) {
                 return srs_error_wrap(err, "dtls handshake done handle");
             }
             break;
@@ -206,21 +206,16 @@ srs_error_t SrsDtlsSession::handshake(SrsUdpMuxSocket* udp_mux_skt)
         }   
     }   
 
-    if (out_bio_len) {
-        srs_netfd_t stfd = udp_mux_skt->stfd();
-        sockaddr_in* addr = udp_mux_skt->peer_addr();
-        socklen_t addrlen = udp_mux_skt->peer_addrlen();
-
-        char* buf = new char[out_bio_len];
-        memcpy(buf, out_bio_data, out_bio_len);
-
-        rtc_session->send_and_free_messages(stfd, addr, addrlen, buf, out_bio_len);
+    if (out_bio_len) {   
+        if ((err = skt->sendto(out_bio_data, out_bio_len, 0)) != srs_success) {
+            return srs_error_wrap(err, "send dtls packet");
+        }
     }
 
     return err;
 }
 
-srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
     if (BIO_reset(bio_in) != 1) {
@@ -230,13 +225,13 @@ srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
         return srs_error_new(ERROR_OpenSslBIOReset, "BIO_reset");
     }
 
-    if (BIO_write(bio_in, udp_mux_skt->data(), udp_mux_skt->size()) <= 0) {
+    if (BIO_write(bio_in, skt->data(), skt->size()) <= 0) {
         // TODO: 0 or -1 maybe block, use BIO_should_retry to check.
         return srs_error_new(ERROR_OpenSslBIOWrite, "BIO_write");
     }
 
     if (! handshake_done) {
-        err = handshake(udp_mux_skt);
+        err = handshake(skt);
     } else {
         while (BIO_ctrl_pending(bio_in) > 0) {
             char dtls_read_buf[8092];
@@ -253,7 +248,7 @@ srs_error_t SrsDtlsSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
     return err;
 }
 
-srs_error_t SrsDtlsSession::on_dtls_handshake_done(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsDtlsSession::on_dtls_handshake_done(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
     srs_trace("rtc session=%s, DTLS handshake done.", rtc_session->id().c_str());
@@ -263,7 +258,7 @@ srs_error_t SrsDtlsSession::on_dtls_handshake_done(SrsUdpMuxSocket* udp_mux_skt)
         return srs_error_wrap(err, "srtp init failed");
     }
 
-    return rtc_session->on_connection_established(udp_mux_skt);
+    return rtc_session->on_connection_established(skt);
 }
 
 srs_error_t SrsDtlsSession::on_dtls_application_data(const char* buf, const int nb_buf)
@@ -537,13 +532,6 @@ srs_error_t SrsRtcSenderThread::cycle()
             return srs_error_wrap(err, "rtc sender thread");
         }
 
-        pprint->elapse();
-
-        if (pprint->can_print()) {
-            // TODO: FIXME:
-            // Print stat like frame/s, packet/s, loss_packets.
-        } 
-
 #ifdef SRS_PERF_QUEUE_COND_WAIT
         if (realtime) {
             // for realtime, min required msgs is 0, send when got one+ msgs.
@@ -567,64 +555,88 @@ srs_error_t SrsRtcSenderThread::cycle()
             continue;
         }
 
-        send_and_free_messages(msgs.msgs, msg_count, sendonly_ukt);
+        int nn = 0;
+        int nn_rtp_pkts = 0;
+        send_and_free_messages(msgs.msgs, msg_count, sendonly_ukt, &nn, &nn_rtp_pkts);
+
+        pprint->elapse();
+        if (pprint->can_print()) {
+            // TODO: FIXME: Print stat like frame/s, packet/s, loss_packets.
+            srs_trace("-> RTC PLAY %d msgs, %d packets, %d bytes", msg_count, nn_rtp_pkts, nn);
+        }
     }
 }
 
-void SrsRtcSenderThread::update_sendonly_socket(SrsUdpMuxSocket* ukt) 
+void SrsRtcSenderThread::update_sendonly_socket(SrsUdpMuxSocket* skt)
 {
-    srs_trace("rtc session=%s address changed, update %s -> %s", 
-        rtc_session->id().c_str(), sendonly_ukt->get_peer_id().c_str(), ukt->get_peer_id().c_str());
+    srs_trace("session %s address changed, update %s -> %s", 
+        rtc_session->id().c_str(), sendonly_ukt->get_peer_id().c_str(), skt->get_peer_id().c_str());
 
     srs_freep(sendonly_ukt);
-    sendonly_ukt = ukt->copy_sendonly();
+    sendonly_ukt = skt->copy_sendonly();
 }
 
-void SrsRtcSenderThread::send_and_free_messages(SrsSharedPtrMessage** msgs, int nb_msgs, SrsUdpMuxSocket* udp_mux_skt)
+void SrsRtcSenderThread::send_and_free_messages(SrsSharedPtrMessage** msgs, int nb_msgs, SrsUdpMuxSocket* skt, int* pnn, int* pnn_rtp_pkts)
 {
-    srs_error_t err = srs_success;
-
-    srs_netfd_t stfd = udp_mux_skt->stfd();
-    sockaddr_in* addr = udp_mux_skt->peer_addr();
-    socklen_t addrlen = udp_mux_skt->peer_addrlen();
+    if (!rtc_session->dtls_session) {
+        return;
+    }
 
     for (int i = 0; i < nb_msgs; i++) {
         SrsSharedPtrMessage* msg = msgs[i];
+        bool is_video = msg->is_video();
+        bool is_audio = msg->is_audio();
 
-        for (int i = 0; i < (int)msg->rtp_packets.size(); ++i) {
-            if (!rtc_session->dtls_session) {
-                continue;
-            }
-
-            SrsRtpSharedPacket* pkt = msg->rtp_packets[i];
-
-            if (msg->is_video()) {
-                pkt->modify_rtp_header_payload_type(video_payload_type);
-                pkt->modify_rtp_header_ssrc(video_ssrc);
-                srs_verbose("send video, ssrc=%u, seq=%u, timestamp=%u", video_ssrc, pkt->rtp_header.sequence, pkt->rtp_header.timestamp);
-            }
-
-            if (msg->is_audio()) {
-                pkt->modify_rtp_header_payload_type(audio_payload_type);
-                pkt->modify_rtp_header_ssrc(audio_ssrc);
-            }
-
-            int length = pkt->size;
-            char* buf = new char[kRtpPacketSize];
-            if (rtc_session->encrypt) {
-                if ((err = rtc_session->dtls_session->protect_rtp(buf, pkt->payload, length)) != srs_success) {
-                    srs_warn("srtp err %s", srs_error_desc(err).c_str()); srs_freep(err); srs_freepa(buf);
-                    continue;
-                }
-            } else {
-                memcpy(buf, pkt->payload, length);
-            }
-
-            rtc_session->send_and_free_messages(stfd, addr, addrlen, buf, length);
+        int nn_rtp_pkts = (int)msg->rtp_packets.size();
+        for (int j = 0; j < nn_rtp_pkts; j++) {
+            SrsRtpSharedPacket* pkt = msg->rtp_packets[j];
+            send_and_free_message(msg, is_video, is_audio, pkt, skt);
         }
+
+        *pnn += msg->size;
+        *pnn_rtp_pkts += nn_rtp_pkts;
 
         srs_freep(msg);
     }
+}
+
+void SrsRtcSenderThread::send_and_free_message(SrsSharedPtrMessage* msg, bool is_video, bool is_audio, SrsRtpSharedPacket* pkt, SrsUdpMuxSocket* skt)
+{
+    srs_error_t err = srs_success;
+
+    if (is_video) {
+        pkt->modify_rtp_header_payload_type(video_payload_type);
+        pkt->modify_rtp_header_ssrc(video_ssrc);
+        srs_verbose("send video, ssrc=%u, seq=%u, timestamp=%u", video_ssrc, pkt->rtp_header.sequence, pkt->rtp_header.timestamp);
+    } else if (is_audio) {
+        pkt->modify_rtp_header_payload_type(audio_payload_type);
+        pkt->modify_rtp_header_ssrc(audio_ssrc);
+    }
+
+    int length = pkt->size;
+    // Fetch a cached message from queue.
+    // TODO: FIXME: Maybe encrypt in async, so the state of mhdr maybe not ready.
+    mmsghdr* mhdr = rtc_session->rtc_server->fetch();
+    char* buf = (char*)mhdr->msg_hdr.msg_iov->iov_base;
+
+    if (rtc_session->encrypt) {
+        if ((err = rtc_session->dtls_session->protect_rtp(buf, pkt->payload, length)) != srs_success) {
+            srs_warn("srtp err %s", srs_error_desc(err).c_str()); srs_freep(err); srs_freepa(buf);
+            return;
+        }
+    } else {
+        memcpy(buf, pkt->payload, length);
+    }
+
+    sockaddr_in* addr = (sockaddr_in*)skt->peer_addr();
+    socklen_t addrlen = (socklen_t)skt->peer_addrlen();
+
+    mhdr->msg_hdr.msg_name = (sockaddr_in*)addr;
+    mhdr->msg_hdr.msg_namelen = (socklen_t)addrlen;
+    mhdr->msg_hdr.msg_iov->iov_len = length;
+    mhdr->msg_len = 0;
+
+    rtc_session->rtc_server->sendmmsg(skt->stfd(), mhdr);
 }
 
 SrsRtcPublisher::SrsRtcPublisher()
@@ -647,7 +659,7 @@ void SrsRtcPublisher::initialize(uint32_t vssrc, uint32_t assrc)
     srs_verbose("video_ssrc=%u, audio_ssrc=%u", video_ssrc, audio_ssrc);
 }
 
-srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* udp_mux_skt, char* buf, int nb_buf)
+srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* skt, char* buf, int nb_buf)
 {
     srs_error_t err = srs_success;
 
@@ -664,22 +676,22 @@ srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* udp_mux_skt, char* buf, int
     uint32_t ssrc = rtp_shared_pkt->rtp_header.ssrc;
 
     if (ssrc == audio_ssrc) {
-        return on_audio(udp_mux_skt, rtp_shared_pkt);
+        return on_audio(skt, rtp_shared_pkt);
     } else if (ssrc == video_ssrc) {
-        return on_video(udp_mux_skt, rtp_shared_pkt);
+        return on_video(skt, rtp_shared_pkt);
     }
 
     return srs_error_new(ERROR_RTC_RTP, "unknown ssrc=%u", ssrc);
 }
 
-srs_error_t SrsRtcPublisher::on_audio(SrsUdpMuxSocket* udp_mux_skt, SrsRtpSharedPacket* rtp_pkt)
+srs_error_t SrsRtcPublisher::on_audio(SrsUdpMuxSocket* skt, SrsRtpSharedPacket* rtp_pkt)
 {
     srs_error_t err = srs_success;
 
     return err;
 }
 
-srs_error_t SrsRtcPublisher::on_video(SrsUdpMuxSocket* udp_mux_skt, SrsRtpSharedPacket* rtp_pkt)
+srs_error_t SrsRtcPublisher::on_video(SrsUdpMuxSocket* skt, SrsRtpSharedPacket* rtp_pkt)
 {
     srs_error_t err = srs_success;
 
@@ -747,12 +759,12 @@ void SrsRtcSession::switch_to_context()
     _srs_context->set_id(cid);
 }
 
-srs_error_t SrsRtcSession::on_stun(SrsUdpMuxSocket* udp_mux_skt, SrsStunPacket* stun_req)
+srs_error_t SrsRtcSession::on_stun(SrsUdpMuxSocket* skt, SrsStunPacket* stun_req)
 {
     srs_error_t err = srs_success;
 
     if (stun_req->is_binding_request()) {
-        if ((err = on_binding_request(udp_mux_skt, stun_req)) != srs_success) {
+        if ((err = on_binding_request(skt, stun_req)) != srs_success) {
             return srs_error_wrap(err, "stun binding request failed");
         }
 
@@ -761,8 +773,8 @@ srs_error_t SrsRtcSession::on_stun(SrsUdpMuxSocket* udp_mux_skt, SrsStunPacket* 
         if (strd && strd->sendonly_ukt) {
             // We are running in the ice-lite(server) mode. If client have multi network interface,
             // we only choose one candidate pair which is determined by client.
-            if (stun_req->get_use_candidate() && strd->sendonly_ukt->get_peer_id() != udp_mux_skt->get_peer_id()) {
-                strd->update_sendonly_socket(udp_mux_skt);
+            if (stun_req->get_use_candidate() && strd->sendonly_ukt->get_peer_id() != skt->get_peer_id()) {
+                strd->update_sendonly_socket(skt);
             }
         }
     }
@@ -792,7 +804,7 @@ srs_error_t SrsRtcSession::check_source()
 #define be32toh ntohl
 #endif
 
-srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* udp_mux_skt, SrsStunPacket* stun_req)
+srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* skt, SrsStunPacket* stun_req)
 {
     srs_error_t err = srs_success;
 
@@ -804,30 +816,28 @@ srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* udp_mux_skt, SrsS
     }
 
     SrsStunPacket stun_binding_response;
+    char buf[kRtpPacketSize];
+    SrsBuffer* stream = new SrsBuffer(buf, sizeof(buf));
+    SrsAutoFree(SrsBuffer, stream);
 
     stun_binding_response.set_message_type(BindingResponse);
     stun_binding_response.set_local_ufrag(stun_req->get_remote_ufrag());
     stun_binding_response.set_remote_ufrag(stun_req->get_local_ufrag());
     stun_binding_response.set_transcation_id(stun_req->get_transcation_id());
     // FIXME: inet_addr is deprecated, IPV6 support
-    stun_binding_response.set_mapped_address(be32toh(inet_addr(udp_mux_skt->get_peer_ip().c_str())));
-    stun_binding_response.set_mapped_port(udp_mux_skt->get_peer_port());
-
-    char* buf = new char[1460];
-    SrsBuffer* stream = new SrsBuffer(buf, 1460);
-    SrsAutoFree(SrsBuffer, stream);
+    stun_binding_response.set_mapped_address(be32toh(inet_addr(skt->get_peer_ip().c_str())));
+    stun_binding_response.set_mapped_port(skt->get_peer_port());
 
     if ((err = stun_binding_response.encode(get_local_sdp()->get_ice_pwd(), stream)) != srs_success) {
         return srs_error_wrap(err, "stun binding response encode failed");
     }
 
-    srs_netfd_t stfd = udp_mux_skt->stfd();
-    sockaddr_in* addr = udp_mux_skt->peer_addr();
-    socklen_t addrlen = udp_mux_skt->peer_addrlen();
-    send_and_free_messages(stfd, addr, addrlen, buf, stream->pos());
+    if ((err = skt->sendto(stream->data(), stream->pos(), 0)) != srs_success) {
+        return srs_error_wrap(err, "stun binding response send failed");
+    }
 
     if (get_session_state() == WAITING_STUN) {
-        peer_id = udp_mux_skt->get_peer_id();
+        peer_id = skt->get_peer_id();
         rtc_server->insert_into_id_sessions(peer_id, this);
 
         set_session_state(DOING_DTLS_HANDSHAKE);
@@ -837,7 +847,7 @@ srs_error_t SrsRtcSession::on_binding_request(SrsUdpMuxSocket* udp_mux_skt, SrsS
     return err;
 }
 
-srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -921,18 +931,14 @@ srs_error_t SrsRtcSession::on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSock
 
             srs_verbose("resend pkt sequence=%u", resend_pkts[i]->rtp_header.sequence);
             dtls_session->protect_rtp(protected_buf, resend_pkts[i]->payload, nb_protected_buf);
-
-            srs_netfd_t stfd = udp_mux_skt->stfd();
-            sockaddr_in* addr = udp_mux_skt->peer_addr();
-            socklen_t addrlen = udp_mux_skt->peer_addrlen();
-            send_and_free_messages(stfd, addr, addrlen, protected_buf, nb_protected_buf);
+            skt->sendto(protected_buf, nb_protected_buf, 0);
         }
     }
 
     return err;
 }
 
-srs_error_t SrsRtcSession::on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -979,7 +985,7 @@ srs_error_t SrsRtcSession::on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxS
     return err;
 }
 
-srs_error_t SrsRtcSession::on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -1048,7 +1054,7 @@ block  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     return err;
 }
 
-srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -1064,11 +1070,15 @@ srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_sk
         for (size_t i = 0; i < remote_sdp.media_descs_.size(); ++i) {
             const SrsMediaDesc& media_desc = remote_sdp.media_descs_[i];
             if (media_desc.is_audio()) {
-                audio_ssrc = media_desc.ssrc_infos_[0].ssrc_;
-                audio_payload_type = media_desc.payload_types_[0].payload_type_;
+                if (! media_desc.ssrc_infos_.empty()) {
+                    audio_ssrc = media_desc.ssrc_infos_[0].ssrc_;
+                    audio_payload_type = media_desc.payload_types_[0].payload_type_;
+                }
             } else if (media_desc.is_video()) {
-                video_ssrc = media_desc.ssrc_infos_[0].ssrc_;
-                video_payload_type = media_desc.payload_types_[0].payload_type_;
+                if (! media_desc.ssrc_infos_.empty()) {
+                    video_ssrc = media_desc.ssrc_infos_[0].ssrc_;
+                    video_payload_type = media_desc.payload_types_[0].payload_type_;
+                }
             }
         }
 
@@ -1078,15 +1088,15 @@ srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* udp_mux_sk
     srs_trace("rtc session=%s, timeout=%dms connection established", id().c_str(), srsu2msi(sessionStunTimeout));
     set_session_state(ESTABLISHED);
 
-    return start_play(udp_mux_skt);
+    return start_play(skt);
 }
 
-srs_error_t SrsRtcSession::start_play(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::start_play(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
     srs_freep(strd);
-    strd = new SrsRtcSenderThread(this, udp_mux_skt, _srs_context->get_id());
+    strd = new SrsRtcSenderThread(this, skt, _srs_context->get_id());
 
     uint32_t video_ssrc = 0;
     uint32_t audio_ssrc = 0;
@@ -1119,12 +1129,12 @@ bool SrsRtcSession::is_stun_timeout()
     return last_stun_time + sessionStunTimeout < srs_get_system_time();
 }
 
-srs_error_t SrsRtcSession::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_dtls(SrsUdpMuxSocket* skt)
 {
-    return dtls_session->on_dtls(udp_mux_skt);
+    return dtls_session->on_dtls(skt);
 }
 
-srs_error_t SrsRtcSession::on_rtp(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_rtp(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -1133,15 +1143,15 @@ srs_error_t SrsRtcSession::on_rtp(SrsUdpMuxSocket* udp_mux_skt)
     }
 
     char* unprotected_buf = new char[1460];
-    int nb_unprotected_buf = udp_mux_skt->size();
-    if ((err = dtls_session->unprotect_rtp(unprotected_buf, udp_mux_skt->data(), nb_unprotected_buf)) != srs_success) {
+    int nb_unprotected_buf = skt->size();
+    if ((err = dtls_session->unprotect_rtp(unprotected_buf, skt->data(), nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "rtp unprotect failed");
     }
 
-    return rtc_publisher->on_rtp(udp_mux_skt, unprotected_buf, nb_unprotected_buf);
+    return rtc_publisher->on_rtp(skt, unprotected_buf, nb_unprotected_buf);
 }
 
-srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
@@ -1149,9 +1159,9 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
         return srs_error_new(ERROR_RTC_RTCP, "recv unexpect rtp packet before dtls done");
     }
 
-    char unprotected_buf[1460];
-    int nb_unprotected_buf = udp_mux_skt->size();
-    if ((err = dtls_session->unprotect_rtcp(unprotected_buf, udp_mux_skt->data(), nb_unprotected_buf)) != srs_success) {
+    char unprotected_buf[kRtpPacketSize];
+    int nb_unprotected_buf = skt->size();
+    if ((err = dtls_session->unprotect_rtcp(unprotected_buf, skt->data(), nb_unprotected_buf)) != srs_success) {
         return srs_error_wrap(err, "rtcp unprotect failed");
     }
 
@@ -1174,7 +1184,7 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
                 break;
             }
             case kRR: {
-                err = on_rtcp_receiver_report(ph, length, udp_mux_skt);
+                err = on_rtcp_receiver_report(ph, length, skt);
                 break;
             }
             case kSDES: {
@@ -1187,11 +1197,11 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
                 break;
             }
             case kRtpFb: {
-                err = on_rtcp_feedback(ph, length, udp_mux_skt);
+                err = on_rtcp_feedback(ph, length, skt);
                 break;
             }
             case kPsFb: {
-                err = on_rtcp_ps_feedback(ph, length, udp_mux_skt);
+                err = on_rtcp_ps_feedback(ph, length, skt);
                 break;
             }
             default:{
@@ -1211,11 +1221,6 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* udp_mux_skt)
     return err;
 }
 
-void SrsRtcSession::send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length)
-{
-    rtc_server->send_and_free_messages(stfd, addr, addrlen, buf, length);
-}
-
 SrsRtcServer::SrsRtcServer()
 {
     listener = NULL;
@@ -1225,18 +1230,27 @@ SrsRtcServer::SrsRtcServer()
     waiting_msgs = false;
     cond = srs_cond_new();
     trd = new SrsDummyCoroutine();
+
+    cache_pos = 0;
+
+    _srs_config->subscribe(this);
 }
 
 SrsRtcServer::~SrsRtcServer()
 {
+    _srs_config->unsubscribe(this);
+
     srs_freep(listener);
     srs_freep(timer);
 
     srs_freep(trd);
     srs_cond_destroy(cond);
 
-    free_messages(mmhdrs);
-    mmhdrs.clear();
+    free_mhdrs(hotspot);
+    hotspot.clear();
+
+    free_mhdrs(cache);
+    cache.clear();
 }
 
 srs_error_t SrsRtcServer::initialize()
@@ -1256,6 +1270,9 @@ srs_error_t SrsRtcServer::initialize()
     if ((err = trd->start()) != srs_success) {
         return srs_error_wrap(err, "start coroutine");
     }
+
+    max_sendmmsg = _srs_config->get_rtc_server_sendmmsg();
+    srs_trace("RTC server init ok, max_sendmmsg=%d", max_sendmmsg);
 
     return err;
 }
@@ -1287,14 +1304,14 @@ srs_error_t SrsRtcServer::listen_udp()
     return err;
 }
 
-srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcServer::on_udp_packet(SrsUdpMuxSocket* skt)
 {
-    if (is_stun(reinterpret_cast<const uint8_t*>(udp_mux_skt->data()), udp_mux_skt->size())) {
-        return on_stun(udp_mux_skt);
-    } else if (is_dtls(reinterpret_cast<const uint8_t*>(udp_mux_skt->data()), udp_mux_skt->size())) {
-        return on_dtls(udp_mux_skt);
-    } else if (is_rtp_or_rtcp(reinterpret_cast<const uint8_t*>(udp_mux_skt->data()), udp_mux_skt->size())) {
-        return on_rtp_or_rtcp(udp_mux_skt);
+    if (is_stun(reinterpret_cast<const uint8_t*>(skt->data()), skt->size())) {
+        return on_stun(skt);
+    } else if (is_dtls(reinterpret_cast<const uint8_t*>(skt->data()), skt->size())) {
+        return on_dtls(skt);
+    } else if (is_rtp_or_rtcp(reinterpret_cast<const uint8_t*>(skt->data()), skt->size())) {
+        return on_rtp_or_rtcp(skt);
     } 
 
     return srs_error_new(ERROR_RTC_UDP, "unknown udp packet type");
@@ -1366,17 +1383,17 @@ SrsRtcSession* SrsRtcServer::find_rtc_session_by_peer_id(const string& peer_id)
     return iter->second;
 }
 
-srs_error_t SrsRtcServer::on_stun(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcServer::on_stun(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
     SrsStunPacket stun_req;
-    if ((err = stun_req.decode(udp_mux_skt->data(), udp_mux_skt->size())) != srs_success) {
+    if ((err = stun_req.decode(skt->data(), skt->size())) != srs_success) {
         return srs_error_wrap(err, "decode stun packet failed");
     }
 
     srs_verbose("recv stun packet from %s, use-candidate=%d, ice-controlled=%d, ice-controlling=%d", 
-        udp_mux_skt->get_peer_id().c_str(), stun_req.get_use_candidate(), stun_req.get_ice_controlled(), stun_req.get_ice_controlling());
+        skt->get_peer_id().c_str(), stun_req.get_use_candidate(), stun_req.get_ice_controlled(), stun_req.get_ice_controlling());
 
     std::string username = stun_req.get_username();
     SrsRtcSession* rtc_session = find_rtc_session_by_username(username);
@@ -1388,42 +1405,42 @@ srs_error_t SrsRtcServer::on_stun(SrsUdpMuxSocket* udp_mux_skt)
     // to make all logs write to the "correct" pid+cid.
     rtc_session->switch_to_context();
 
-    return rtc_session->on_stun(udp_mux_skt, &stun_req);
+    return rtc_session->on_stun(skt, &stun_req);
 }
 
-srs_error_t SrsRtcServer::on_dtls(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcServer::on_dtls(SrsUdpMuxSocket* skt)
 {
-    SrsRtcSession* rtc_session = find_rtc_session_by_peer_id(udp_mux_skt->get_peer_id());
+    SrsRtcSession* rtc_session = find_rtc_session_by_peer_id(skt->get_peer_id());
 
     if (rtc_session == NULL) {
-        return srs_error_new(ERROR_RTC_DTLS, "can not find rtc session by peer_id=%s", udp_mux_skt->get_peer_id().c_str());
+        return srs_error_new(ERROR_RTC_DTLS, "can not find rtc session by peer_id=%s", skt->get_peer_id().c_str());
     }
 
     // Now, we got the RTC session to handle the packet, switch to its context
     // to make all logs write to the "correct" pid+cid.
     rtc_session->switch_to_context();
 
-    return rtc_session->on_dtls(udp_mux_skt);
+    return rtc_session->on_dtls(skt);
 }
 
-srs_error_t SrsRtcServer::on_rtp_or_rtcp(SrsUdpMuxSocket* udp_mux_skt)
+srs_error_t SrsRtcServer::on_rtp_or_rtcp(SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
 
-    SrsRtcSession* rtc_session = find_rtc_session_by_peer_id(udp_mux_skt->get_peer_id());
+    SrsRtcSession* rtc_session = find_rtc_session_by_peer_id(skt->get_peer_id());
 
     if (rtc_session == NULL) {
-        return srs_error_new(ERROR_RTC_RTP, "can not find rtc session by peer_id=%s", udp_mux_skt->get_peer_id().c_str());
+        return srs_error_new(ERROR_RTC_RTP, "can not find rtc session by peer_id=%s", skt->get_peer_id().c_str());
     }
 
     // Now, we got the RTC session to handle the packet, switch to its context
     // to make all logs write to the "correct" pid+cid.
     rtc_session->switch_to_context();
 
-    if (is_rtcp(reinterpret_cast<const uint8_t*>(udp_mux_skt->data()), udp_mux_skt->size())) {
-        err = rtc_session->on_rtcp(udp_mux_skt);
+    if (is_rtcp(reinterpret_cast<const uint8_t*>(skt->data()), skt->size())) {
+        err = rtc_session->on_rtcp(skt);
     } else {
-        err = rtc_session->on_rtp(udp_mux_skt);
+        err = rtc_session->on_rtp(skt);
     }
 
     return err;
@@ -1476,20 +1493,39 @@ srs_error_t SrsRtcServer::notify(int type, srs_utime_t interval, srs_utime_t tic
     return srs_success;
 }
 
-void SrsRtcServer::send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, socklen_t addrlen, char* buf, int length)
+srs_error_t SrsRtcServer::on_reload_rtc_server()
+{
+    int v = _srs_config->get_rtc_server_sendmmsg();
+    if (max_sendmmsg != v) {
+        max_sendmmsg = v;
+        srs_trace("Reload max_sendmmsg=%d", max_sendmmsg);
+    }
+
+    return srs_success;
+}
+
+mmsghdr* SrsRtcServer::fetch()
+{
+    // TODO: FIXME: Maybe need to shrink?
+    if (cache_pos >= (int)cache.size()) {
+        mmsghdr mhdr;
+        memset(&mhdr, 0, sizeof(mmsghdr));
+
+        mhdr.msg_hdr.msg_iovlen = 1;
+        mhdr.msg_hdr.msg_iov = new iovec();
+        mhdr.msg_hdr.msg_iov->iov_base = new char[kRtpPacketSize];
+        mhdr.msg_hdr.msg_iov->iov_len = kRtpPacketSize;
+        mhdr.msg_len = 0;
+
+        cache.push_back(mhdr);
+    }
+
+    return &cache[cache_pos++];
+}
+
+void SrsRtcServer::sendmmsg(srs_netfd_t stfd, mmsghdr* /*hdr*/)
 {
     mmstfd = stfd;
-
-    mmsghdr mhdr;
-    memset(&mhdr, 0, sizeof(mhdr));
-
-    mhdr.msg_hdr.msg_name = addr;
-    mhdr.msg_hdr.msg_namelen = addrlen;
-    mhdr.msg_hdr.msg_iovlen = 1;
-    mhdr.msg_hdr.msg_iov = new iovec();
-    mhdr.msg_hdr.msg_iov->iov_base = buf;
-    mhdr.msg_hdr.msg_iov->iov_len = length;
-    mmhdrs.push_back(mhdr);
 
     if (waiting_msgs) {
         waiting_msgs = false;
@@ -1497,12 +1533,13 @@ void SrsRtcServer::send_and_free_messages(srs_netfd_t stfd, sockaddr_in* addr, s
     }
 }
 
-void SrsRtcServer::free_messages(vector<mmsghdr>& hdrs)
+void SrsRtcServer::free_mhdrs(std::vector<mmsghdr>& mhdrs)
 {
-    for (int i = 0; i < (int)hdrs.size(); i++) {
-        msghdr* hdr = &hdrs[i].msg_hdr;
-        for (int j = (int)hdr->msg_iovlen - 1; j >= 0 ; j--) {
-            iovec* iov = hdr->msg_iov + j;
+    for (int i = 0; i < (int)mhdrs.size(); i++) {
+        mmsghdr* hdr = &mhdrs[i];
+
+        for (int j = (int)hdr->msg_hdr.msg_iovlen - 1; j >= 0 ; j--) {
+            iovec* iov = hdr->msg_hdr.msg_iov + j;
             char* data = (char*)iov->iov_base;
             srs_freep(data);
             srs_freep(iov);
@@ -1514,30 +1551,30 @@ srs_error_t SrsRtcServer::cycle()
 {
     srs_error_t err = srs_success;
 
-    // TODO: FIXME: Use pithy print.
-    uint32_t cnt = 1;
-
+    uint64_t nn_msgs = 0;
     SrsStatistic* stat = SrsStatistic::instance();
 
-    // TODO: FIXME: Support reload.
-    int max_sendmmsg = _srs_config->get_rtc_server_sendmmsg();
+    SrsPithyPrint* pprint = SrsPithyPrint::create_rtc_send();
+    SrsAutoFree(SrsPithyPrint, pprint);
 
     while (true) {
         if ((err = trd->pull()) != srs_success) {
             return err;
         }
 
-        // TODO: FIXME: Use cond trigger.
-        if (mmhdrs.empty()) {
+        int pos = cache_pos;
+        if (pos <= 0) {
             waiting_msgs = true;
             srs_cond_wait(cond);
+            continue;
         }
 
-        vector<mmsghdr> mhdrs;
-        mmhdrs.swap(mhdrs);
+        // We are working on hotspot now.
+        cache.swap(hotspot);
+        cache_pos = 0;
 
-        mmsghdr* p = &mhdrs[0];
-        for (mmsghdr* end = p + mhdrs.size(); p < end; p += max_sendmmsg) {
+        mmsghdr* p = &hotspot[0];
+        for (mmsghdr* end = p + pos; p < end; p += max_sendmmsg) {
             int vlen = (int)(end - p);
             vlen = srs_min(max_sendmmsg, vlen);
 
@@ -1549,14 +1586,13 @@ srs_error_t SrsRtcServer::cycle()
             stat->perf_mw_on_packets(vlen);
         }
 
-        // TODO: FIXME: Use pithy print.
-        if ((cnt++ % 100) == 0) {
-            // TODO: FIXME: Support reload.
-            max_sendmmsg = _srs_config->get_rtc_server_sendmmsg();
-            srs_trace("-> RTC SEND %d msgs, by sendmmsg %d", mhdrs.size(), max_sendmmsg);
-        }
+        // Increase total messages.
+        nn_msgs += pos;
 
-        free_messages(mhdrs);
+        pprint->elapse();
+        if (pprint->can_print()) {
+            srs_trace("-> RTC SEND %d by sendmmsg %d, total %" PRId64 " msgs", pos, max_sendmmsg, nn_msgs);
+        }
     }
 
     return err;
