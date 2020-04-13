@@ -181,25 +181,28 @@ size_t SrsRtpHeader::header_size()
     return kRtpHeaderFixedSize + cc * 4 + (extension ? (extension_length + 1) * 4 : 0);
 }
 
-SrsRtpVideoHeader::SrsRtpVideoHeader()
+SrsRtpH264VideoHeader::SrsRtpH264VideoHeader()
 {
     is_first_packet_of_frame = false;
     is_last_packet_of_frame = false;
 }
 
-SrsRtpVideoHeader::~SrsRtpVideoHeader()
+SrsRtpH264VideoHeader::~SrsRtpH264VideoHeader()
 {
 }
 
-SrsRtpVideoHeader::SrsRtpVideoHeader(const SrsRtpVideoHeader& rhs)
+SrsRtpH264VideoHeader::SrsRtpH264VideoHeader(const SrsRtpH264VideoHeader& rhs)
 {
     operator=(rhs);
 }
 
-SrsRtpVideoHeader& SrsRtpVideoHeader::operator=(const SrsRtpVideoHeader& rhs)
+SrsRtpH264VideoHeader& SrsRtpH264VideoHeader::operator=(const SrsRtpH264VideoHeader& rhs)
 {
     is_first_packet_of_frame = rhs.is_first_packet_of_frame;
     is_last_packet_of_frame = rhs.is_last_packet_of_frame;
+    nalu_type = rhs.nalu_type;
+    nalu_header = rhs.nalu_header;
+    nalu_offset = rhs.nalu_offset;
 
     return *this;
 }

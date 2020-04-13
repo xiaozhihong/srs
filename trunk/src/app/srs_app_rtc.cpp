@@ -383,6 +383,7 @@ srs_error_t SrsRtpH264Demuxer::parse(SrsRtpSharedPacket* rtp_pkt)
     int rtp_payload_size = rtp_pkt->rtp_payload_size();
 
     if (rtp_payload_size == 0) {
+        srs_verbose("seq=%u, empty payload", rtp_pkt->rtp_header.sequence);
         return err;
     }
 
@@ -392,6 +393,9 @@ srs_error_t SrsRtpH264Demuxer::parse(SrsRtpSharedPacket* rtp_pkt)
         srs_verbose("seq=%u, single nalu", rtp_pkt->rtp_header.sequence);
         rtp_pkt->rtp_video_header.is_first_packet_of_frame = true;
         rtp_pkt->rtp_video_header.is_last_packet_of_frame = true;
+        rtp_pkt->rtp_video_header.nalu_type = nal_type;
+        rtp_pkt->rtp_video_header.nalu_header = rtp_payload[0];
+        rtp_pkt->rtp_video_header.nalu_offset.push_back(make_pair(0, rtp_payload_size));
     } else if (nal_type == kFuA) {
         srs_verbose("seq=%u, fu-a", rtp_pkt->rtp_header.sequence);
         if ((rtp_payload[1] & kStart)) {
@@ -400,17 +404,23 @@ srs_error_t SrsRtpH264Demuxer::parse(SrsRtpSharedPacket* rtp_pkt)
         if ((rtp_payload[1] & kEnd)) {
             rtp_pkt->rtp_video_header.is_last_packet_of_frame = true;
         }
+        rtp_pkt->rtp_video_header.nalu_type = nal_type;
+        rtp_pkt->rtp_video_header.nalu_header = (rtp_payload[0] & (~kNalTypeMask)) | (rtp_payload[1] & kNalTypeMask);
+        rtp_pkt->rtp_video_header.nalu_offset.push_back(make_pair(2, rtp_payload_size - 2));
     } else if (nal_type == kStapA) {
         srs_verbose("seq=%u, stap-a", rtp_pkt->rtp_header.sequence);
         int i = 1;
         rtp_pkt->rtp_video_header.is_first_packet_of_frame = true;
         rtp_pkt->rtp_video_header.is_last_packet_of_frame = true;
+        rtp_pkt->rtp_video_header.nalu_type = nal_type;
         while (i < rtp_payload_size) {
             srs_verbose("stap-a cur index=%s", srs_string_dumps_hex(reinterpret_cast<const char*>(rtp_payload + i), 2).c_str());
             uint16_t nal_len = (rtp_payload[i]) << 8 | rtp_payload[i + 1];
             if (nal_len > rtp_payload_size - i) {
                 return srs_error_new(ERROR_RTC_RTP_MUXER, "invalid stap-a packet, nal len=%u, i=%d, rtp_payload_size=%d", nal_len, i, rtp_payload_size);
             }
+
+            rtp_pkt->rtp_video_header.nalu_offset.push_back(make_pair(i + 2, nal_len));
 
             i += nal_len + 2;
         }

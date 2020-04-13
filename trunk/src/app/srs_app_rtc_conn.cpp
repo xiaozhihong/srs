@@ -639,10 +639,13 @@ void SrsRtcSenderThread::send_and_free_message(SrsSharedPtrMessage* msg, bool is
     rtc_session->rtc_server->sendmmsg(skt->stfd(), mhdr);
 }
 
-SrsRtcPublisher::SrsRtcPublisher()
+SrsRtcPublisher::SrsRtcPublisher(SrsRtcSession* session)
 {
+    rtc_session = session;
     rtp_h264_demuxer = new SrsRtpH264Demuxer();
     rtp_video_queue = new SrsRtpQueue(1500);
+
+    source = NULL;
 }
 
 SrsRtcPublisher::~SrsRtcPublisher()
@@ -651,10 +654,11 @@ SrsRtcPublisher::~SrsRtcPublisher()
     srs_freep(rtp_video_queue);
 }
 
-void SrsRtcPublisher::initialize(uint32_t vssrc, uint32_t assrc)
+void SrsRtcPublisher::initialize(uint32_t vssrc, uint32_t assrc, SrsRequest request)
 {
     video_ssrc = vssrc;
     audio_ssrc = assrc;
+    this->request = request;
 
     srs_verbose("video_ssrc=%u, audio_ssrc=%u", video_ssrc, audio_ssrc);
 }
@@ -664,14 +668,10 @@ srs_error_t SrsRtcPublisher::on_rtp(SrsUdpMuxSocket* skt, char* buf, int nb_buf)
     srs_error_t err = srs_success;
 
 	SrsRtpSharedPacket* rtp_shared_pkt = new SrsRtpSharedPacket();
+    SrsAutoFree(SrsRtpSharedPacket, rtp_shared_pkt);
     if ((err = rtp_shared_pkt->decode(buf, nb_buf)) != srs_success) {
         return srs_error_wrap(err, "rtp packet decode failed");
     }
-
-    srs_verbose("recv rtp data, ssrc=%u, payload_type=%u, padding=%d, extensions=%d, cc=%d, marker=%d, sequence=%u, timestamp=%u",
-        rtp_shared_pkt->rtp_header.ssrc, rtp_shared_pkt->rtp_header.payload_type, rtp_shared_pkt->rtp_header.padding, 
-        rtp_shared_pkt->rtp_header.extension, rtp_shared_pkt->rtp_header.cc, rtp_shared_pkt->rtp_header.marker, 
-        rtp_shared_pkt->rtp_header.sequence, rtp_shared_pkt->rtp_header.timestamp);
 
     uint32_t ssrc = rtp_shared_pkt->rtp_header.ssrc;
 
@@ -695,18 +695,277 @@ srs_error_t SrsRtcPublisher::on_video(SrsUdpMuxSocket* skt, SrsRtpSharedPacket* 
 {
     srs_error_t err = srs_success;
 
+    static srs_utime_t last_nack_time = srs_get_system_time(); 
+    srs_utime_t now = srs_update_system_time();
+
+    if (now - last_nack_time >= 100000) {
+        srs_verbose("nack diff=%d", now - last_nack_time);
+        last_nack_time = now;
+        vector<uint16_t> nack_seqs;
+        rtp_video_queue->nack_.get_nack_seqs(nack_seqs);
+        vector<uint16_t>::iterator iter = nack_seqs.begin();
+        while (iter != nack_seqs.end()) {
+            char buf[1024];
+            SrsBuffer stream(buf, sizeof(buf));
+            stream.write_1bytes(0x81);
+            stream.write_1bytes(kRtpFb);
+            stream.write_2bytes(3);
+            stream.write_4bytes(video_ssrc);
+            stream.write_4bytes(video_ssrc);
+            uint16_t pid = *iter;
+            uint16_t blp = 0;
+            srs_verbose("pid=%u", pid);
+            while (iter + 1 != nack_seqs.end() && (*(iter + 1) - pid <= 15)) {
+                blp |= (1 << (*(iter + 1) - pid - 1));
+                srs_verbose("blp=%u", *(iter+1));
+                ++iter;
+            }
+            stream.write_2bytes(pid);
+            stream.write_2bytes(blp);
+
+            srs_verbose("nack dump=%s", srs_string_dumps_hex(stream.data(), stream.pos()).c_str());
+
+            char protected_buf[kRtpPacketSize];
+            int nb_protected_buf = stream.pos();
+
+            if (rtc_session->dtls_session->protect_rtcp(protected_buf, stream.data(), nb_protected_buf) == srs_success) {
+                skt->sendto(protected_buf, nb_protected_buf, 0);
+                //skt->sendto(stream.data(), stream.pos(), 0);
+                srs_verbose("send nack req, len=%d", nb_protected_buf);
+            } else {
+                srs_verbose("send nack failed, because of protect rtcp failed");
+            }
+            ++iter;
+        }
+    }
+
     if ((err = rtp_h264_demuxer->parse(rtp_pkt)) != srs_success) {
         return srs_error_wrap(err, "rtp h264 demux failed");
     }
+
+    srs_verbose("recv rtp video data, rtp_header_size=%u, rtp_payload_size=%u,"
+        "ssrc=%u, payload_type=%u,padding=%d, extensions=%d, cc=%d, marker=%d, sequence=%u, timestamp=%u"
+        ",is_first_packet_of_frame=%d, is_last_packet_of_frame=%d"
+        //", payload=%s",
+        ,rtp_pkt->rtp_header.header_size(), rtp_pkt->rtp_payload_size(),
+        rtp_pkt->rtp_header.ssrc, rtp_pkt->rtp_header.payload_type, rtp_pkt->rtp_header.padding, 
+        rtp_pkt->rtp_header.extension, rtp_pkt->rtp_header.cc, rtp_pkt->rtp_header.marker, 
+        rtp_pkt->rtp_header.sequence, rtp_pkt->rtp_header.timestamp,
+        rtp_pkt->rtp_video_header.is_first_packet_of_frame, rtp_pkt->rtp_video_header.is_last_packet_of_frame
+        //, srs_string_dumps_hex(rtp_pkt->rtp_payload(), rtp_pkt->rtp_payload_size()).c_str()
+        );
+
 
     rtp_video_queue->insert(rtp_pkt);
 
     std::vector<std::vector<SrsRtpSharedPacket*> > frames;
     rtp_video_queue->get_and_clean_collected_frames(frames);
 
-    for (int i = 0; i < frames.size(); ++i) {
-        srs_verbose("collect %d frames, seq range %u,%u", frames.size(), frames[i].front()->rtp_header.sequence, frames[i].back()->rtp_header.sequence);
-        for (int n = 0; n < frames[i].size(); ++n) {
+    static uint8_t startcode[4] = {0x00, 0x00, 0x00, 0x01};
+
+    for (size_t i = 0; i < frames.size(); ++i) {
+        if (! frames[i].empty()) {
+            srs_verbose("collect %d frames, seq range %u,%u", frames.size(), frames[i].front()->rtp_header.sequence, frames[i].back()->rtp_header.sequence);
+        }
+        int frame_size = 5;
+        vector<uint32_t>  nalu_len;
+        uint32_t len = 0;
+        for (size_t n = 0; n < frames[i].size(); ++n) {
+            for (size_t j = 0; j < frames[i][n]->rtp_video_header.nalu_offset.size(); ++j) {
+                if (frames[i][n]->rtp_video_header.nalu_type != kFuA) {
+                    uint8_t* p = reinterpret_cast<uint8_t*>(frames[i][n]->rtp_payload() + frames[i][n]->rtp_video_header.nalu_offset[j].first);
+                    if (((p[0] & kNalTypeMask) != SrsAvcNaluTypeAccessUnitDelimiter) && 
+                        ((p[0] & kNalTypeMask) != SrsAvcNaluTypeSEI) &&
+                        ((p[0] & kNalTypeMask) != SrsAvcNaluTypeSPS) &&
+                        ((p[0] & kNalTypeMask) != SrsAvcNaluTypePPS)) {
+                        frame_size += frames[i][n]->rtp_video_header.nalu_offset[j].second + 4;
+                        nalu_len.push_back(frames[i][n]->rtp_video_header.nalu_offset[j].second);
+                    } 
+                } else {
+                    if (frames[i][n]->rtp_video_header.is_first_packet_of_frame) {
+                        frame_size += 5;
+                        len += 1;
+                    }
+                    frame_size += frames[i][n]->rtp_video_header.nalu_offset[j].second;
+                    len += frames[i][n]->rtp_video_header.nalu_offset[j].second;
+
+                    if (frames[i][n]->rtp_video_header.is_last_packet_of_frame) {
+                        nalu_len.push_back(len);
+                        len = 0;
+                    }
+                }
+            }
+        }
+
+        uint8_t* frame = new uint8_t[frame_size];
+        int frame_len = 5;
+
+        bool video_header_change = false;
+        int64_t timestamp = 0;
+
+        bool idr = false;
+        size_t len_index = 0;
+        for (size_t n = 0; n < frames[i].size(); ++n) {
+            for (size_t j = 0; j < frames[i][n]->rtp_video_header.nalu_offset.size(); ++j) {
+                timestamp = frames[i][n]->rtp_header.timestamp;
+
+                uint8_t* p = reinterpret_cast<uint8_t*>(frames[i][n]->rtp_payload() + frames[i][n]->rtp_video_header.nalu_offset[j].first);
+                srs_verbose("nalu_type=%u, %02X", frames[i][n]->rtp_video_header.nalu_type, p[0]);
+                if (frames[i][n]->rtp_video_header.nalu_type != kFuA) {
+                    if ((p[0] & kNalTypeMask) == SrsAvcNaluTypeSPS) {
+                        srs_verbose("sps");
+                        string cur_sps = string((char*)p, frames[i][n]->rtp_video_header.nalu_offset[j].second);
+                        if (! cur_sps.empty() && sps != cur_sps) {
+                            video_header_change = true;
+                            sps = cur_sps;
+                        }
+                    } else if ((p[0] & kNalTypeMask) == SrsAvcNaluTypePPS) {
+                        srs_verbose("pps");
+                        string cur_pps = string((char*)p, frames[i][n]->rtp_video_header.nalu_offset[j].second);
+                        if (! cur_pps.empty() && pps != cur_pps) {
+                            video_header_change = true;
+                            pps = cur_pps;
+                        }
+                    } else if (((p[0] & kNalTypeMask) != SrsAvcNaluTypeAccessUnitDelimiter) && ((p[0] & kNalTypeMask) != SrsAvcNaluTypeSEI)) {
+                        uint32_t len = nalu_len[len_index++];
+                        srs_verbose("nalu len=%u", len);
+                        SrsBuffer stream((char*)frame + frame_len, 4);
+                        stream.write_4bytes(len);
+                        frame_len += 4;
+                        memcpy(frame + frame_len, p, frames[i][n]->rtp_video_header.nalu_offset[j].second);
+                        frame_len += frames[i][n]->rtp_video_header.nalu_offset[j].second;
+                    }
+                } else {
+                    if (frames[i][n]->rtp_video_header.is_first_packet_of_frame) {
+                        uint32_t len = nalu_len[len_index++];
+                        srs_verbose("nalu len=%u", len);
+                        SrsBuffer stream((char*)frame + frame_len, 4);
+                        stream.write_4bytes(len);
+                        frame_len += 4;
+                        frame[frame_len++] = frames[i][n]->rtp_video_header.nalu_header;
+
+                        if ((frames[i][n]->rtp_video_header.nalu_header & kNalTypeMask) == SrsAvcNaluTypeIDR) {
+                            srs_verbose("idr");
+                            idr = true;
+                        }
+                    }
+                    memcpy(frame + frame_len, frames[i][n]->rtp_payload() + frames[i][n]->rtp_video_header.nalu_offset[j].first, 
+                        frames[i][n]->rtp_video_header.nalu_offset[j].second);
+                    frame_len += frames[i][n]->rtp_video_header.nalu_offset[j].second;
+                }
+            }
+        }
+
+        if (video_header_change) {
+            srs_verbose("sps/pps change or init");
+            if (source == NULL) {
+                // TODO: FIXME: Should refactor it, directly use http server as handler.
+                ISrsSourceHandler* handler = _srs_hybrid->srs()->instance();
+                if ((err = _srs_sources->fetch_or_create(&request, handler, &source)) != srs_success) {
+                    return srs_error_wrap(err, "create source");
+                }
+
+                source->on_publish();
+            }
+
+            uint8_t* video_header = new uint8_t[1500];
+            SrsBuffer *stream = new SrsBuffer((char*)video_header, 1500);
+            SrsAutoFree(SrsBuffer, stream);
+            stream->write_1bytes(0x17);
+            stream->write_1bytes(0x00);
+            stream->write_1bytes(0x00);
+            stream->write_1bytes(0x00);
+            stream->write_1bytes(0x00);
+
+            // NAL SIZE 61 76 63 43 01 42 C0 1E FF E1 SPS_LEN SPS 01 PPS_LEN PPS
+            stream->write_1bytes(0x01);
+            stream->write_1bytes(0x42);
+            stream->write_1bytes(0xC0);
+            stream->write_1bytes(0x1E);
+            stream->write_1bytes(0xFF);
+            stream->write_1bytes(0xE1);
+
+            stream->write_2bytes(sps.size());
+            stream->write_string(sps);
+
+            stream->write_1bytes(0x01);
+
+            stream->write_2bytes(pps.size());
+            stream->write_string(pps);
+
+            SrsMessageHeader header;
+            header.message_type = 9;
+            header.timestamp = timestamp / 90;
+            SrsCommonMessage* shared_video = new SrsCommonMessage();
+            shared_video->create(&header, reinterpret_cast<char*>(video_header), stream->pos());
+            srs_error_t e = source->on_video(shared_video);
+            if (e != srs_success) {
+                srs_warn("on video header err=%s", srs_error_desc(e).c_str());
+            }
+
+            srs_verbose("rtp on video header");
+        }
+
+        if (! sps.empty() && ! pps.empty()) {
+            if (source == NULL) {
+                // TODO: FIXME: Should refactor it, directly use http server as handler.
+                ISrsSourceHandler* handler = _srs_hybrid->srs()->instance();
+                if ((err = _srs_sources->fetch_or_create(&request, handler, &source)) != srs_success) {
+                    return srs_error_wrap(err, "create source");
+                }
+                source->on_publish();
+            }
+
+            if (idr) {
+                frame[0] = 0x17;
+            } else {
+                frame[0] = 0x27;
+            }
+            frame[1] = 0x01;
+            frame[2] = 0x00;
+            frame[3] = 0x00;
+            frame[4] = 0x00;
+
+            SrsMessageHeader header;
+            header.message_type = 9;
+            header.timestamp = timestamp / 90;
+            SrsCommonMessage* shared_video = new SrsCommonMessage();
+            shared_video->create(&header, reinterpret_cast<char*>(frame), frame_len);
+            srs_error_t e = source->on_video(shared_video);
+            if (e != srs_success) {
+                srs_warn("on video err=%s", srs_error_desc(e).c_str());
+            }
+
+            srs_verbose("rtp on video");
+        }
+    }
+
+    // dump test file.
+    for (size_t i = 0; i < frames.size(); ++i) {
+        if (! frames[i].empty()) {
+            srs_verbose("collect %d frames, seq range %u,%u", frames.size(), frames[i].front()->rtp_header.sequence, frames[i].back()->rtp_header.sequence);
+        }
+
+        for (size_t n = 0; n < frames[i].size(); ++n) {
+            for (size_t j = 0; j < frames[i][n]->rtp_video_header.nalu_offset.size(); ++j) {
+                static int fd = -1;
+                if (fd < 0) {
+                    fd = open("dump.264", O_CREAT|O_TRUNC|O_RDWR, 0664);
+                }
+                if (frames[i][n]->rtp_video_header.nalu_type == kFuA) {
+                    if (frames[i][n]->rtp_video_header.is_first_packet_of_frame) {
+                        write(fd, startcode, sizeof(startcode));
+                        write(fd, &(frames[i][n]->rtp_video_header.nalu_header), 1);
+                    }
+                } else {
+                    write(fd, startcode, sizeof(startcode));
+                }
+
+                write(fd, frames[i][n]->rtp_payload() + frames[i][n]->rtp_video_header.nalu_offset[j].first, 
+                    frames[i][n]->rtp_video_header.nalu_offset[j].second);
+            }
+
+            srs_freep(frames[i][n]);
         }
     }
 
@@ -730,7 +989,7 @@ SrsRtcSession::SrsRtcSession(SrsRtcServer* rtc_svr, const SrsRequest& req, const
 
     cid = context_id;
 
-    rtc_publisher = new SrsRtcPublisher();
+    rtc_publisher = new SrsRtcPublisher(this);
 
     encrypt = true;
 
@@ -774,6 +1033,9 @@ srs_error_t SrsRtcSession::on_stun(SrsUdpMuxSocket* skt, SrsStunPacket* stun_req
             // We are running in the ice-lite(server) mode. If client have multi network interface,
             // we only choose one candidate pair which is determined by client.
             if (stun_req->get_use_candidate() && strd->sendonly_ukt->get_peer_id() != skt->get_peer_id()) {
+                rtc_server->insert_into_id_sessions(skt->get_peer_id(), this);
+                rtc_server->remove_id_session(strd->sendonly_ukt->get_peer_id());
+
                 strd->update_sendonly_socket(skt);
             }
         }
@@ -1082,7 +1344,7 @@ srs_error_t SrsRtcSession::on_connection_established(SrsUdpMuxSocket* skt)
             }
         }
 
-        rtc_publisher->initialize(video_ssrc, audio_ssrc);
+        rtc_publisher->initialize(video_ssrc, audio_ssrc, request);
     }
 
     srs_trace("rtc session=%s, timeout=%dms connection established", id().c_str(), srsu2msi(sessionStunTimeout));
@@ -1117,9 +1379,11 @@ srs_error_t SrsRtcSession::start_play(SrsUdpMuxSocket* skt)
         return srs_error_wrap(err, "SrsRtcSenderThread init");
     }
 
+    /*
     if ((err = strd->start()) != srs_success) {
         return srs_error_wrap(err, "start SrsRtcSenderThread");
     }
+    */
 
     return err;
 }
@@ -1459,6 +1723,11 @@ SrsRtcSession* SrsRtcServer::find_rtc_session_by_username(const std::string& use
 bool SrsRtcServer::insert_into_id_sessions(const string& peer_id, SrsRtcSession* rtc_session)
 {
     return map_id_session.insert(make_pair(peer_id, rtc_session)).second;
+}
+
+void SrsRtcServer::remove_id_session(const string& peer_id)
+{
+    map_id_session.erase(peer_id);
 }
 
 void SrsRtcServer::check_and_clean_timeout_session()

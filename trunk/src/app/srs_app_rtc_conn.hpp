@@ -159,11 +159,16 @@ private:
 private:
     SrsRtpH264Demuxer* rtp_h264_demuxer;
     SrsRtpQueue* rtp_video_queue;
+private:
+    SrsRequest request;
+    SrsSource* source;
+    std::string sps;
+    std::string pps;
 public:
-    SrsRtcPublisher();
+    SrsRtcPublisher(SrsRtcSession* session);
     virtual ~SrsRtcPublisher();
 public:
-    void initialize(uint32_t vssrc, uint32_t assrc);
+    void initialize(uint32_t vssrc, uint32_t assrc, SrsRequest request);
     srs_error_t on_rtp(SrsUdpMuxSocket* skt, char* buf, int nb_buf);
 private:
     srs_error_t on_audio(SrsUdpMuxSocket* skt, SrsRtpSharedPacket* rtp_pkt);
@@ -173,6 +178,7 @@ private:
 class SrsRtcSession
 {
     friend class SrsRtcSenderThread;
+    friend class SrsRtcPublisher;
 private:
     SrsRtcServer* rtc_server;
     SrsSdp  remote_sdp;
@@ -277,6 +283,7 @@ public:
     virtual srs_error_t listen_api();
     SrsRtcSession* create_rtc_session(const SrsRequest& req, const SrsSdp& remote_sdp, SrsSdp& local_sdp, const std::string& mock_eip);
     bool insert_into_id_sessions(const std::string& peer_id, SrsRtcSession* rtc_session);
+    void remove_id_session(const std::string& peer_id);
     void check_and_clean_timeout_session();
 private:
     srs_error_t on_stun(SrsUdpMuxSocket* skt);

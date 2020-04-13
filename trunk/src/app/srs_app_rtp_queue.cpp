@@ -42,13 +42,14 @@ using namespace std;
 SrsRtpNackInfo::SrsRtpNackInfo()
 {
     count_ = 0;
-    gen_ms_ = srs_get_system_time();
-    last_req_ms_ = 0;
+    generate_time_ = srs_update_system_time();
+    last_req_nack_time_ = 0;
     req_nack_times_ = 0;
 };
 
-SrsRtpNackList::SrsRtpNackList()
+SrsRtpNackList::SrsRtpNackList(SrsRtpQueue* rtp_queue)
 {
+    rtp_queue_ = rtp_queue;
 }
 
 SrsRtpNackList::~SrsRtpNackList()
@@ -72,7 +73,46 @@ bool SrsRtpNackList::find(uint16_t seq)
     return nack_queue_.count(seq);
 }
 
+void SrsRtpNackList::dump()
+{
+    for (std::map<uint16_t, SrsRtpNackInfo>::iterator iter = nack_queue_.begin(); iter != nack_queue_.end(); ++iter) {
+        srs_verbose("@rtp_queue, nack size=%u, seq=%u, generate_time=%ld, last_req_nack_time_=%ld, req_nack_times_=%d", 
+            nack_queue_.size(), iter->first, iter->second.generate_time_, iter->second.last_req_nack_time_, iter->second.req_nack_times_);
+    }
+}
+
+void SrsRtpNackList::get_nack_seqs(vector<uint16_t>& seqs)
+{
+    srs_utime_t now = srs_update_system_time();
+    std::map<uint16_t, SrsRtpNackInfo>::iterator iter = nack_queue_.begin();
+    while (iter != nack_queue_.end()) {
+        SrsRtpNackInfo& nack_info = iter->second;
+
+        if (now - nack_info.generate_time_ > 2000 * 1000 || nack_info.req_nack_times_ > 5) {
+            srs_verbose("@rtp_queue, stop send nack req, seq=%u, from generate_time %dus, nack times=%d", 
+                iter->first, (now - nack_info.generate_time_), nack_info.req_nack_times_);
+            rtp_queue_->notify_drop_seq(iter->first);
+            nack_queue_.erase(iter++);
+            continue;
+        }
+
+        if (now - nack_info.generate_time_ < 500* 1000) {
+            srs_verbose("@rtp_queue, seq=%u, generate %dus age", iter->first, now - nack_info.generate_time_);
+            break;
+        }
+
+        if (now - nack_info.last_req_nack_time_ >= 200 * 1000 && nack_info.req_nack_times_ <= 5) {
+            ++nack_info.req_nack_times_;
+            nack_info.last_req_nack_time_ = now;
+            seqs.push_back(iter->first);
+        }
+
+        ++iter;
+    }
+}
+
 SrsRtpQueue::SrsRtpQueue(size_t capacity)
+    : nack_(this)
 {
     capacity_ = capacity;
     head_sequence_ = 0;
@@ -97,37 +137,59 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
         head_sequence_ = seq;
         highest_sequence_ = seq;
 
-        srs_verbose("init head_sequence/highest_sequence = %u", seq);
+        srs_verbose("@rtp_queue, init head_sequence/highest_sequence=%u", seq);
     } else {
         if (nack_.find(seq)) {
-            srs_verbose("seq=%u rtx success", seq);
+            srs_verbose("@rtp_queue, seq=%u rtx success, after %d nack counts", seq, nack_.nack_queue_[seq].req_nack_times_);
             nack_.remove(seq);
         } else {
             if (seq_cmp(highest_sequence_, seq)) {
                 for (uint16_t s = highest_sequence_ + 1; s != seq; ++s) {
-                    srs_verbose("loss seq=%u", s);
+                    srs_verbose("@rtp_queue, loss seq=%u, insert into nack list. ( > highest_sequence)", s);
                     nack_.insert(s);
                 }
 
-                srs_verbose("update highest_sequence from %u to %u", highest_sequence_, seq);
                 highest_sequence_ = seq;
             } else {
+                if (seq_cmp(seq, head_sequence_)) {
+                    srs_verbose("@rtp_queue, update head sequence from %u to %u, because recv < head_sequence_", head_sequence_, seq);
+                    head_sequence_ = seq;
+                }
                 for (uint16_t s = seq + 1; s != highest_sequence_; ++s) {
-                    srs_verbose("loss seq=%u", s);
+                    srs_verbose("@rtp_queue, loss seq=%u, insert into nack list. ( < highest_sequence)", s);
                     nack_.insert(s);
                 }
             }
         }
     }
 
+    while (head_sequence_ + capacity_ < highest_sequence_) {
+        srs_verbose("@rtp_queue, head_sequence=%u, highest_sequence=%u", head_sequence_, highest_sequence_);
+        for (uint16_t s = head_sequence_ + 1; s != highest_sequence_; ++s) {
+            SrsRtpSharedPacket*& pkt = queue_[s % capacity_];
+            if (pkt && pkt->rtp_video_header.is_first_packet_of_frame) {
+                srs_verbose("@rtp_queue, drop packet, update head sequence from %u to %u", head_sequence_, s);
+                head_sequence_ = s;
+                break;
+            }
+
+            srs_verbose("@rtp_queue, drop seq=%u", s);
+            nack_.remove(s);
+            if (pkt && pkt->rtp_header.sequence == s) {
+                delete pkt;
+                pkt = NULL;
+            }
+        }
+    }
+
     ++count_;
 
-    SrsRtpSharedPacket*& old_pkt = queue_[seq % capacity_];
+    SrsRtpSharedPacket* old_pkt = queue_[seq % capacity_];
     if (old_pkt) {
         delete old_pkt;
     }
 
-    old_pkt = rtp_pkt;
+    queue_[seq % capacity_] = rtp_pkt->copy();
 
     if (rtp_pkt->rtp_header.marker) {
         collect_packet();
@@ -141,19 +203,34 @@ void SrsRtpQueue::get_and_clean_collected_frames(std::vector<std::vector<SrsRtpS
     frames.swap(frames_);
 }
 
+void SrsRtpQueue::notify_drop_seq(uint16_t seq)
+{
+    uint16_t s = seq + 1;
+    for ( ; s != highest_sequence_; ++s) {
+        SrsRtpSharedPacket* pkt = queue_[s % capacity_];
+        if (pkt && pkt->rtp_video_header.is_first_packet_of_frame) {
+            break;
+        }
+    }
+
+    srs_verbose("@rtp_queue, update head sequence from %u to %u, because seq %u stop nack", head_sequence_, s, seq);
+    head_sequence_ = s;
+}
+
 void SrsRtpQueue::collect_packet()
 {
+    nack_.dump();
+
     vector<SrsRtpSharedPacket*> frame;
-    srs_verbose("head_sequence_=%u", head_sequence_);
     for (uint16_t s = head_sequence_; s != highest_sequence_; ++s) {
         SrsRtpSharedPacket* pkt = queue_[s % capacity_];
         if (nack_.find(s)) {
-            srs_verbose("seq=%u found in nack list", s);
+            srs_verbose("@rtp_queue, seq=%u found in nack list", s);
             break;
         }
 
-        if (s == head_sequence_ && ! pkt->rtp_payload_size() != 0 && ! pkt->rtp_video_header.is_first_packet_of_frame) {
-            srs_verbose("seq=%u, not first packet of frame", s);
+        if (s == head_sequence_ && pkt->rtp_payload_size() != 0 && ! pkt->rtp_video_header.is_first_packet_of_frame) {
+            srs_verbose("@rtp_queue, seq=%u, not first packet of frame", s);
             break;
         }
 
@@ -162,8 +239,12 @@ void SrsRtpQueue::collect_packet()
             frames_.push_back(frame);
             frame.clear();
 
-            srs_verbose("update haeder sequence from %u to %u", head_sequence_, s + 1);
+            srs_verbose("@rtp_queue, collect frame, update haeder sequence from %u to %u", head_sequence_, s + 1);
             head_sequence_ = s + 1;
         }
+    }
+
+    for (size_t i = 0; i < frame.size(); ++i) {
+        srs_freep(frame[i]);
     }
 }

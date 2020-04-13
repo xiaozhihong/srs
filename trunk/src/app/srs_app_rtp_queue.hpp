@@ -31,14 +31,15 @@
 #include <map>
 
 class SrsRtpSharedPacket;
+class SrsRtpQueue;
 
 struct SrsRtpNackInfo
 {
     SrsRtpNackInfo();
 
     int count_;
-    uint64_t gen_ms_;
-    uint64_t last_req_ms_;
+    srs_utime_t generate_time_;
+    srs_utime_t last_req_nack_time_;
     int req_nack_times_;
 };
 
@@ -57,15 +58,20 @@ struct SeqComp
 
 class SrsRtpNackList
 {
+    friend class SrsRtpQueue;
 private:
     std::map<uint16_t, SrsRtpNackInfo, SeqComp> nack_queue_;
+    SrsRtpQueue* rtp_queue_;
 public:
-    SrsRtpNackList();
+    SrsRtpNackList(SrsRtpQueue* rtp_queue);
     virtual ~SrsRtpNackList();
 public:
     void insert(uint16_t seq);
     void remove(uint16_t seq);
     bool find(uint16_t seq);
+    void get_nack_seqs(std::vector<uint16_t>& seqs);
+public:
+    void dump();
 };
 
 class SrsRtpQueue
@@ -76,6 +82,7 @@ private:
     uint16_t head_sequence_;
     uint64_t count_;
     SrsRtpSharedPacket** queue_;
+public:
     SrsRtpNackList nack_;
 private:
     std::vector<std::vector<SrsRtpSharedPacket*> > frames_;
@@ -86,6 +93,7 @@ public:
     srs_error_t insert(SrsRtpSharedPacket* rtp_pkt);
 public:
     void get_and_clean_collected_frames(std::vector<std::vector<SrsRtpSharedPacket*> >& frames);
+    void notify_drop_seq(uint16_t seq);
 private:
     void collect_packet();
 };

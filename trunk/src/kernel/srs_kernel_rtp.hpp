@@ -27,6 +27,7 @@
 #include <srs_core.hpp>
 
 #include <string>
+#include <vector>
 
 const int kRtpHeaderFixedSize = 12;
 const uint8_t kRtpMarker = 0x80;
@@ -61,16 +62,19 @@ public:
 public:
 };
 
-class SrsRtpVideoHeader
+class SrsRtpH264VideoHeader
 {
 public:
     bool is_first_packet_of_frame;
     bool is_last_packet_of_frame;
+    uint8_t nalu_type;
+    uint8_t nalu_header;
+    std::vector<std::pair<size_t, size_t> > nalu_offset; // offset, size
 public:
-    SrsRtpVideoHeader();
-    virtual ~SrsRtpVideoHeader();
-    SrsRtpVideoHeader(const SrsRtpVideoHeader& rhs);
-    SrsRtpVideoHeader& operator=(const SrsRtpVideoHeader& rhs);
+    SrsRtpH264VideoHeader();
+    virtual ~SrsRtpH264VideoHeader();
+    SrsRtpH264VideoHeader(const SrsRtpH264VideoHeader& rhs);
+    SrsRtpH264VideoHeader& operator=(const SrsRtpH264VideoHeader& rhs);
 };
 
 class SrsRtpSharedPacket
@@ -91,7 +95,7 @@ private:
     SrsRtpSharedPacketPayload* payload_ptr;
 public:
     SrsRtpHeader rtp_header;
-    SrsRtpVideoHeader rtp_video_header;
+    SrsRtpH264VideoHeader rtp_video_header;
     char* payload;
     int size;
 public:
