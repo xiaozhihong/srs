@@ -181,29 +181,66 @@ size_t SrsRtpHeader::header_size()
     return kRtpHeaderFixedSize + cc * 4 + (extension ? (extension_length + 1) * 4 : 0);
 }
 
-SrsRtpH264VideoHeader::SrsRtpH264VideoHeader()
+SrsRtpPayloadHeader::SrsRtpPayloadHeader()
 {
     is_first_packet_of_frame = false;
     is_last_packet_of_frame = false;
 }
 
-SrsRtpH264VideoHeader::~SrsRtpH264VideoHeader()
+SrsRtpPayloadHeader::~SrsRtpPayloadHeader()
 {
 }
 
-SrsRtpH264VideoHeader::SrsRtpH264VideoHeader(const SrsRtpH264VideoHeader& rhs)
+SrsRtpPayloadHeader::SrsRtpPayloadHeader(const SrsRtpPayloadHeader& rhs)
 {
     operator=(rhs);
 }
 
-SrsRtpH264VideoHeader& SrsRtpH264VideoHeader::operator=(const SrsRtpH264VideoHeader& rhs)
+SrsRtpPayloadHeader& SrsRtpPayloadHeader::operator=(const SrsRtpPayloadHeader& rhs)
 {
     is_first_packet_of_frame = rhs.is_first_packet_of_frame;
     is_last_packet_of_frame = rhs.is_last_packet_of_frame;
+}
+
+SrsRtpH264Header::SrsRtpH264Header() : SrsRtpPayloadHeader()
+{
+}
+
+SrsRtpH264Header::~SrsRtpH264Header()
+{
+}
+
+SrsRtpH264Header::SrsRtpH264Header(const SrsRtpH264Header& rhs)
+{
+    operator=(rhs);
+}
+
+SrsRtpH264Header& SrsRtpH264Header::operator=(const SrsRtpH264Header& rhs)
+{
+    SrsRtpPayloadHeader::operator=(rhs);
     nalu_type = rhs.nalu_type;
     nalu_header = rhs.nalu_header;
     nalu_offset = rhs.nalu_offset;
 
+    return *this;
+}
+
+SrsRtpOpusHeader::SrsRtpOpusHeader() : SrsRtpPayloadHeader()
+{
+}
+
+SrsRtpOpusHeader::~SrsRtpOpusHeader()
+{
+}
+
+SrsRtpOpusHeader::SrsRtpOpusHeader(const SrsRtpOpusHeader& rhs)
+{
+    operator=(rhs);
+}
+
+SrsRtpOpusHeader& SrsRtpOpusHeader::operator=(const SrsRtpOpusHeader& rhs)
+{
+    SrsRtpPayloadHeader::operator=(rhs);
     return *this;
 }
 
@@ -225,6 +262,8 @@ SrsRtpSharedPacket::SrsRtpSharedPacket()
 
     payload = NULL;
     size = 0;
+
+    rtp_payload_header = NULL;
 }
 
 SrsRtpSharedPacket::~SrsRtpSharedPacket()
@@ -236,9 +275,11 @@ SrsRtpSharedPacket::~SrsRtpSharedPacket()
             --payload_ptr->shared_count;
         }
     }
+
+    srs_freep(rtp_payload_header);
 }
 
-srs_error_t SrsRtpSharedPacket::create(int64_t timestamp, uint16_t sequence, uint32_t ssrc, uint16_t payload_type, char* p, int s)
+srs_error_t SrsRtpSharedPacket::create(SrsRtpHeader* rtp_h, SrsRtpPayloadHeader* rtp_ph, char* p, int s)
 {
     srs_error_t err = srs_success;
 
@@ -248,10 +289,8 @@ srs_error_t SrsRtpSharedPacket::create(int64_t timestamp, uint16_t sequence, uin
 
     srs_assert(!payload_ptr);
 
-    rtp_header.timestamp = timestamp;
-    rtp_header.sequence = sequence;
-    rtp_header.ssrc = ssrc;
-    rtp_header.payload_type = payload_type;
+    this->rtp_header = *rtp_h;
+    this->rtp_payload_header = rtp_ph;
 
     // TODO: rtp header padding.
     size_t buffer_size = rtp_header.header_size() + s;
@@ -301,7 +340,11 @@ SrsRtpSharedPacket* SrsRtpSharedPacket::copy()
     payload_ptr->shared_count++;
 
     copy->rtp_header = rtp_header;
-    copy->rtp_video_header = rtp_video_header;
+    if (dynamic_cast<SrsRtpH264Header*>(rtp_payload_header)) {
+        copy->rtp_payload_header = new SrsRtpH264Header(*(dynamic_cast<SrsRtpH264Header*>(rtp_payload_header)));
+    } else if (dynamic_cast<SrsRtpOpusHeader*>(rtp_payload_header)) {
+        copy->rtp_payload_header = new SrsRtpOpusHeader(*(dynamic_cast<SrsRtpOpusHeader*>(rtp_payload_header)));
+    }
 
     copy->payload = payload;
     copy->size = size;

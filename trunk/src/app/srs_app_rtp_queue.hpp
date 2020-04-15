@@ -33,14 +33,32 @@
 class SrsRtpSharedPacket;
 class SrsRtpQueue;
 
+struct SrsNackOption
+{
+    SrsNackOption()
+    {
+        // Default nack option.
+        max_count = 5;
+        max_alive_time = 2 * SRS_UTIME_SECONDS;
+        first_nack_interval = 500 * SRS_UTIME_MILLISECONDS;
+        nack_interval = 400 * SRS_UTIME_MILLISECONDS;
+    }
+    int max_count;
+    srs_utime_t max_alive_time;
+    int64_t first_nack_interval;
+    int64_t nack_interval;
+};
+
 struct SrsRtpNackInfo
 {
     SrsRtpNackInfo();
 
-    int count_;
+    // Use to control the time of first nack req and the life of seq.
     srs_utime_t generate_time_;
-    srs_utime_t last_req_nack_time_;
-    int req_nack_times_;
+    // Use to control nack interval.
+    srs_utime_t pre_req_nack_time_;
+    // Use to control nack times.
+    int req_nack_count_;
 };
 
 inline bool seq_cmp(const uint16_t& l, const uint16_t& r)
@@ -58,39 +76,55 @@ struct SeqComp
 
 class SrsRtpNackList
 {
-    friend class SrsRtpQueue;
 private:
-    std::map<uint16_t, SrsRtpNackInfo, SeqComp> nack_queue_;
+    // Nack queue, seq order, oldest to newest.
+    std::map<uint16_t, SrsRtpNackInfo, SeqComp> queue_;
     SrsRtpQueue* rtp_queue_;
+    SrsNackOption opts_;
+private:
+    srs_utime_t pre_check_time_;
 public:
     SrsRtpNackList(SrsRtpQueue* rtp_queue);
     virtual ~SrsRtpNackList();
 public:
     void insert(uint16_t seq);
     void remove(uint16_t seq);
-    bool find(uint16_t seq);
-    void get_nack_seqs(std::vector<uint16_t>& seqs);
+    SrsRtpNackInfo* find(uint16_t seq);
 public:
-    void dump();
+    void get_nack_seqs(std::vector<uint16_t>& seqs);
 };
 
 class SrsRtpQueue
 {
 private:
-    size_t capacity_;
+    /*
+     *[seq1|seq2|seq3|seq4|seq5 ... seq10|seq11(loss)|seq12(loss)|seq13]
+     *             \___(head_sequence_)      \                      \___(highest_sequence_)
+     *                                        \___(no received, in nack list)
+     */
+    // Capacity of the ring-buffer.
+    size_t   capacity_;
+    // Thei highest sequence we have receive.
     uint16_t highest_sequence_;
+    // The sequence waitting to read.
     uint16_t head_sequence_;
+    // Packet count we have received.
+    // FIXME:Warp around.
     uint64_t count_;
+    // Ring bufer.
     SrsRtpSharedPacket** queue_;
+private:
+    bool one_packet_per_frame_;
 public:
     SrsRtpNackList nack_;
 private:
     std::vector<std::vector<SrsRtpSharedPacket*> > frames_;
 public:
-    SrsRtpQueue(size_t capacity = 1024);
+    SrsRtpQueue(size_t capacity = 1024, bool one_packet_per_frame = false);
     virtual ~SrsRtpQueue();
 public:
     srs_error_t insert(SrsRtpSharedPacket* rtp_pkt);
+    srs_error_t remove(uint16_t seq);
 public:
     void get_and_clean_collected_frames(std::vector<std::vector<SrsRtpSharedPacket*> >& frames);
     void notify_drop_seq(uint16_t seq);

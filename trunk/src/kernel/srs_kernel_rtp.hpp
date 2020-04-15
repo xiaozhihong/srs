@@ -62,19 +62,38 @@ public:
 public:
 };
 
-class SrsRtpH264VideoHeader
+class SrsRtpPayloadHeader
 {
 public:
     bool is_first_packet_of_frame;
     bool is_last_packet_of_frame;
+public:
+    SrsRtpPayloadHeader();
+    virtual ~SrsRtpPayloadHeader();
+    SrsRtpPayloadHeader(const SrsRtpPayloadHeader& rhs);
+    SrsRtpPayloadHeader& operator=(const SrsRtpPayloadHeader& rhs);
+};
+
+class SrsRtpOpusHeader : public SrsRtpPayloadHeader
+{
+public:
+    SrsRtpOpusHeader();
+    virtual ~SrsRtpOpusHeader();
+    SrsRtpOpusHeader(const SrsRtpOpusHeader& rhs);
+    SrsRtpOpusHeader& operator=(const SrsRtpOpusHeader& rhs);
+};
+
+class SrsRtpH264Header : public SrsRtpPayloadHeader
+{
+public:
     uint8_t nalu_type;
     uint8_t nalu_header;
     std::vector<std::pair<size_t, size_t> > nalu_offset; // offset, size
 public:
-    SrsRtpH264VideoHeader();
-    virtual ~SrsRtpH264VideoHeader();
-    SrsRtpH264VideoHeader(const SrsRtpH264VideoHeader& rhs);
-    SrsRtpH264VideoHeader& operator=(const SrsRtpH264VideoHeader& rhs);
+    SrsRtpH264Header();
+    virtual ~SrsRtpH264Header();
+    SrsRtpH264Header(const SrsRtpH264Header& rhs);
+    SrsRtpH264Header& operator=(const SrsRtpH264Header& rhs);
 };
 
 class SrsRtpSharedPacket
@@ -95,14 +114,14 @@ private:
     SrsRtpSharedPacketPayload* payload_ptr;
 public:
     SrsRtpHeader rtp_header;
-    SrsRtpH264VideoHeader rtp_video_header;
+    SrsRtpPayloadHeader* rtp_payload_header;
     char* payload;
     int size;
 public:
     SrsRtpSharedPacket();
     virtual ~SrsRtpSharedPacket();
 public:
-    srs_error_t create(int64_t timestamp, uint16_t sequence, uint32_t ssrc, uint16_t payload_type, char* payload, int size);
+    srs_error_t create(SrsRtpHeader* rtp_h, SrsRtpPayloadHeader* rtp_ph, char* p, int s);
     srs_error_t decode(char* buf, int nb_buf);
     SrsRtpSharedPacket* copy();
 public:

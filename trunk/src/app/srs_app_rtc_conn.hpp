@@ -159,6 +159,7 @@ private:
 private:
     SrsRtpH264Demuxer* rtp_h264_demuxer;
     SrsRtpQueue* rtp_video_queue;
+    SrsRtpQueue* rtp_audio_queue;
 private:
     SrsRequest request;
     SrsSource* source;
