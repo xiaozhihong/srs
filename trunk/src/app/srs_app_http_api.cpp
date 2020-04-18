@@ -1060,6 +1060,11 @@ srs_error_t SrsGoApiRtcPlay::exchange_sdp(const std::string& app, const std::str
             local_media_desc.session_info_.setup_ = "active";
         } else if (remote_media_desc.session_info_.setup_ == "actpass") {
             local_media_desc.session_info_.setup_ = "passive";
+        } else {
+            // @see: https://tools.ietf.org/html/rfc4145#section-4.1
+            // The default value of the setup attribute in an offer/answer exchange
+            // is 'active' in the offer and 'passive' in the answer.
+            local_media_desc.session_info_.setup_ = "passive";
         }
 
         if (remote_media_desc.sendonly_) {
@@ -1346,6 +1351,11 @@ srs_error_t SrsGoApiRtcPublish::exchange_sdp(const std::string& app, const std::
         } else if (remote_media_desc.session_info_.setup_ == "passive") {
             local_media_desc.session_info_.setup_ = "active";
         } else if (remote_media_desc.session_info_.setup_ == "actpass") {
+            local_media_desc.session_info_.setup_ = "passive";
+        } else {
+            // @see: https://tools.ietf.org/html/rfc4145#section-4.1
+            // The default value of the setup attribute in an offer/answer exchange
+            // is 'active' in the offer and 'passive' in the answer.
             local_media_desc.session_info_.setup_ = "passive";
         }
 

@@ -56,6 +56,7 @@ SrsRtpNackList::~SrsRtpNackList()
 
 void SrsRtpNackList::insert(uint16_t seq)
 {
+    // FIXME: full, drop packet, and request key frame.
     SrsRtpNackInfo& nack_info = queue_[seq];
 }
 
@@ -73,6 +74,15 @@ SrsRtpNackInfo* SrsRtpNackList::find(uint16_t seq)
     }
 
     return &(iter->second);
+}
+
+void SrsRtpNackList::dump()
+{
+    return;
+    srs_verbose("@debug, queue size=%u", queue_.size());
+    for (std::map<uint16_t, SrsRtpNackInfo>::iterator iter = queue_.begin(); iter != queue_.end(); ++iter) {
+        srs_verbose("@debug, nack seq=%u", iter->first);
+    }
 }
 
 void SrsRtpNackList::get_nack_seqs(vector<uint16_t>& seqs)
@@ -120,9 +130,17 @@ SrsRtpQueue::SrsRtpQueue(size_t capacity, bool one_packet_per_frame)
     capacity_ = capacity;
     head_sequence_ = 0;
     highest_sequence_ = 0;
-    count_ = 0;
+    initialized_ = false;
+    start_collected_ = false;
     queue_ = new SrsRtpSharedPacket*[capacity_];
     memset(queue_, 0, sizeof(SrsRtpSharedPacket*) * capacity);
+
+    cycle_ = 0;
+    jitter_ = 0;
+    last_trans_time_ = 0;
+
+    number_of_packet_reecived = 0;
+    number_of_packet_lossed = 0;
 
     one_packet_per_frame_ = one_packet_per_frame;
 }
@@ -138,35 +156,59 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
 
     uint16_t seq = rtp_pkt->rtp_header.sequence;
 
+    srs_utime_t now = srs_update_system_time();
+
     // First packet recv, init head_sequence and highest_sequence.
-    if (count_ == 0) {
+    if (! initialized_) {
+        initialized_ = true;
         head_sequence_ = seq;
         highest_sequence_ = seq;
+
+        ++number_of_packet_reecived;
+
+        last_trans_time_ = now/1000 - rtp_pkt->rtp_header.timestamp/90;
     } else {
         SrsRtpNackInfo* nack_info = NULL;
         if ((nack_info = nack_.find(seq)) != NULL) {
-            srs_utime_t now = srs_update_system_time();
             srs_verbose("seq=%u, alive time=%d, nack count=%d, rtx success", seq, now - nack_info->generate_time_, nack_info->req_nack_count_);
             nack_.remove(seq);
         } else {
-            // seq > highest_sequence_
-            if (seq_cmp(highest_sequence_, seq)) {
-                for (uint16_t s = highest_sequence_ + 1; s != seq; ++s) {
-                    srs_verbose("highest seq=%u, cur seq=%u, loss seq=%u", highest_sequence_, seq, s);
-                    nack_.insert(s);
+            // Calc jitter.
+            {
+                int trans_time = now/1000 - rtp_pkt->rtp_header.timestamp/90;
+
+                int diff = trans_time - last_trans_time_;
+                if (diff < 0) {
+                    diff = -diff;
                 }
 
+                last_trans_time_ = trans_time;
+
+                jitter_ = jitter_ * 15 / 16 + (static_cast<double>(diff) / 16.0);
+                srs_verbose("jitter=%.2f", jitter_);
+            }
+
+            ++number_of_packet_reecived;
+            // seq > highest_sequence_
+            if (seq_cmp(highest_sequence_, seq)) {
+                insert_into_nack_list(highest_sequence_ + 1, seq);
+
+                if (seq < highest_sequence_) {
+                    srs_verbose("warp around, cycle=%lu", cycle_);
+                    ++cycle_;
+                }
                 highest_sequence_ = seq;
             } else {
                 // Because we don't know the ISN(initiazlie sequence number), the first packet
                 // we received maybe no the first paacet client sented.
-                if (seq_cmp(seq, head_sequence_)) {
-                    srs_info("head seq=%u, cur seq=%u, update head seq because recv less than it.", head_sequence_, seq);
-                    head_sequence_ = seq;
-                }
-                for (uint16_t s = seq + 1; s != highest_sequence_; ++s) {
-                    srs_verbose("highest seq=%u, cur seq=%u, loss seq=%u", highest_sequence_, seq, s);
-                    nack_.insert(s);
+                if (! start_collected_) {
+                    if (seq_cmp(seq, head_sequence_)) {
+                        srs_info("head seq=%u, cur seq=%u, update head seq because recv less than it.", head_sequence_, seq);
+                        head_sequence_ = seq;
+                    }
+                    insert_into_nack_list(seq + 1, highest_sequence_);
+                } else {
+                    srs_verbose("seq=%u, rtx success, too old", seq);
                 }
             }
         }
@@ -176,13 +218,19 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
     srs_verbose("seqs range=[%u-%u], delay=%d", head_sequence_, highest_sequence_, delay);
 
     // Check seqs out of range.
+    if (head_sequence_ + capacity_ < highest_sequence_) {
+        srs_verbose("try collect packet becuase seq out of range");
+        collect_packet();
+    }
     while (head_sequence_ + capacity_ < highest_sequence_) {
         srs_trace("seqs out of range, head seq=%u, hightest seq=%u", head_sequence_, highest_sequence_);
         remove(head_sequence_);
-        for (uint16_t s = head_sequence_ + 1; s != highest_sequence_; ++s) {
+        uint16_t s = head_sequence_ + 1;
+        for ( ; s != highest_sequence_; ++s) {
             SrsRtpSharedPacket*& pkt = queue_[s % capacity_];
             // Choose the new head sequence. Must be the first packet of frame.
             if (pkt && pkt->rtp_payload_header->is_first_packet_of_frame) {
+                srs_trace("find except, update head seq from %u to %u when seqs out of range", head_sequence_, s);
                 head_sequence_ = s;
                 break;
             }
@@ -195,9 +243,9 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
                 pkt = NULL;
             }
         }
+        srs_trace("force update, update head seq from %u to %u when seqs out of range", head_sequence_, s);
+        head_sequence_ = s;
     }
-
-    ++count_;
 
     SrsRtpSharedPacket* old_pkt = queue_[seq % capacity_];
     if (old_pkt) {
@@ -207,7 +255,7 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
     queue_[seq % capacity_] = rtp_pkt->copy();
 
     // Marker bit means the last packet of frame received.
-    if (rtp_pkt->rtp_header.marker || one_packet_per_frame_) {
+    if (rtp_pkt->rtp_header.marker || (highest_sequence_ - head_sequence_ >= capacity_ / 2) || one_packet_per_frame_) {
         collect_packet();
     }
 
@@ -246,13 +294,25 @@ void SrsRtpQueue::notify_drop_seq(uint16_t seq)
     head_sequence_ = s;
 }
 
+void SrsRtpQueue::insert_into_nack_list(uint16_t seq_start, uint16_t seq_end)
+{
+    for (uint16_t s = seq_start; s != seq_end; ++s) {
+        srs_verbose("loss seq=%u, insert into nack list", s);
+        nack_.insert(s);
+        ++number_of_packet_lossed;
+    }
+}
+
 void SrsRtpQueue::collect_packet()
 {
     vector<SrsRtpSharedPacket*> frame;
     for (uint16_t s = head_sequence_; s != highest_sequence_; ++s) {
         SrsRtpSharedPacket* pkt = queue_[s % capacity_];
+
+        nack_.dump();
+
         if (nack_.find(s) != NULL) {
-            srs_verbose("head seq=%u, found in nack list");
+            srs_verbose("seq=%u, found in nack list when collect frame", s);
             break;
         }
 
@@ -263,6 +323,9 @@ void SrsRtpQueue::collect_packet()
 
         frame.push_back(pkt->copy());
         if (pkt->rtp_header.marker || one_packet_per_frame_) {
+            if (! start_collected_) {
+                start_collected_ = true;
+            }
             frames_.push_back(frame);
             frame.clear();
 

@@ -91,6 +91,7 @@ public:
     void remove(uint16_t seq);
     SrsRtpNackInfo* find(uint16_t seq);
 public:
+    void dump();
     void get_nack_seqs(std::vector<uint16_t>& seqs);
 };
 
@@ -108,11 +109,16 @@ private:
     uint16_t highest_sequence_;
     // The sequence waitting to read.
     uint16_t head_sequence_;
-    // Packet count we have received.
-    // FIXME:Warp around.
-    uint64_t count_;
+    bool initialized_;
+    bool start_collected_;
     // Ring bufer.
     SrsRtpSharedPacket** queue_;
+private:
+    uint64_t cycle_;
+    double jitter_;
+    int64_t last_trans_time_;
+    uint64_t number_of_packet_reecived;
+    uint64_t number_of_packet_lossed;
 private:
     bool one_packet_per_frame_;
 public:
@@ -128,6 +134,8 @@ public:
 public:
     void get_and_clean_collected_frames(std::vector<std::vector<SrsRtpSharedPacket*> >& frames);
     void notify_drop_seq(uint16_t seq);
+private:
+    void insert_into_nack_list(uint16_t seq_start, uint16_t seq_end);
 private:
     void collect_packet();
 };

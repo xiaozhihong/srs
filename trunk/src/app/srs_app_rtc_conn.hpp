@@ -68,6 +68,23 @@ const uint8_t kSLI  = 2;
 const uint8_t kRPSI = 3;
 const uint8_t kAFB  = 15;
 
+class SrsNtp
+{
+public:
+    uint64_t system_ms_;
+    uint64_t ntp_;
+    uint32_t ntp_second_;
+    uint32_t ntp_fractions_;
+public:
+    SrsNtp();
+    virtual ~SrsNtp();
+public:
+    static SrsNtp from_time_ms(uint64_t ms);
+    static SrsNtp to_time_ms(uint64_t ntp);
+public:
+    static uint64_t kMagicNtpFractionalUnit;
+};
+
 enum SrsRtcSessionStateType
 {
     // TODO: FIXME: Should prefixed by enum name.
@@ -244,6 +261,7 @@ private:
 private:
     srs_error_t on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
     srs_error_t on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
+    srs_error_t on_rtcp_sender_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
     srs_error_t on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
 };
 
