@@ -109,6 +109,7 @@ void SrsRtpNackList::get_nack_seqs(vector<uint16_t>& seqs)
             continue;
         }
 
+        // TODO:Statistics unorder packet.
         if (now - nack_info.generate_time_ < opts_.first_nack_interval) {
             break;
         }
@@ -346,6 +347,9 @@ void SrsRtpQueue::insert_into_nack_list(uint16_t seq_start, uint16_t seq_end)
         nack_.insert(s);
         ++number_of_packet_lossed_;
     }
+
+    // FIXME: Record key frame sequence.
+    // FIXME: When nack list too long, clear and send PLI.
 }
 
 void SrsRtpQueue::collect_packet()
