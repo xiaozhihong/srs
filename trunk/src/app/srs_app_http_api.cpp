@@ -1338,6 +1338,8 @@ srs_error_t SrsGoApiRtcPublish::exchange_sdp(const std::string& app, const std::
             if (local_media_desc.payload_types_.empty()) {
                 return srs_error_new(ERROR_RTC_SDP_EXCHANGE, "no found valid H.264 payload type");
             }
+
+            local_media_desc.payload_types_.back().rtcp_fb_.push_back("rrtr");
         }
 
         local_media_desc.mid_ = remote_media_desc.mid_;

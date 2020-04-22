@@ -40,7 +40,7 @@ struct SrsNackOption
         // Default nack option.
         max_count = 5;
         max_alive_time = 2 * SRS_UTIME_SECONDS;
-        first_nack_interval = 500 * SRS_UTIME_MILLISECONDS;
+        first_nack_interval = 10 * SRS_UTIME_MILLISECONDS;
         nack_interval = 400 * SRS_UTIME_MILLISECONDS;
     }
     int max_count;
@@ -83,6 +83,8 @@ private:
     SrsNackOption opts_;
 private:
     srs_utime_t pre_check_time_;
+private:
+    int rtt_;
 public:
     SrsRtpNackList(SrsRtpQueue* rtp_queue);
     virtual ~SrsRtpNackList();
@@ -92,7 +94,10 @@ public:
     SrsRtpNackInfo* find(uint16_t seq);
 public:
     void dump();
+public:
     void get_nack_seqs(std::vector<uint16_t>& seqs);
+public:
+    void update_rtt(int rtt);
 };
 
 class SrsRtpQueue
@@ -117,8 +122,10 @@ private:
     uint64_t cycle_;
     double jitter_;
     int64_t last_trans_time_;
-    uint64_t number_of_packet_reecived;
-    uint64_t number_of_packet_lossed;
+    uint64_t pre_number_of_packet_received_;
+    uint64_t pre_number_of_packet_lossed_;
+    uint64_t num_of_packet_received_;
+    uint64_t number_of_packet_lossed_;
 private:
     bool one_packet_per_frame_;
 public:
@@ -134,6 +141,13 @@ public:
 public:
     void get_and_clean_collected_frames(std::vector<std::vector<SrsRtpSharedPacket*> >& frames);
     void notify_drop_seq(uint16_t seq);
+public:
+    uint32_t get_extended_highest_sequence();
+    uint8_t get_fraction_lost();
+    uint32_t get_cumulative_number_of_packets_lost();
+    uint32_t get_interarrival_jitter();
+public:
+    void update_rtt(int rtt);
 private:
     void insert_into_nack_list(uint16_t seq_start, uint16_t seq_end);
 private:

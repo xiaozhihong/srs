@@ -61,6 +61,7 @@ const uint8_t kApp  = 204;
 // @see: https://tools.ietf.org/html/rfc4585#section-6.1
 const uint8_t kRtpFb = 205;
 const uint8_t kPsFb  = 206;
+const uint8_t kXR    = 207;
 
 // @see: https://tools.ietf.org/html/rfc4585#section-6.3
 const uint8_t kPLI  = 1;
@@ -169,6 +170,7 @@ private:
 
 class SrsRtcPublisher
 {
+    friend class SrsRtcSession;
 private:
     SrsRtcSession* rtc_session;
     uint32_t video_ssrc;
@@ -261,6 +263,7 @@ private:
 private:
     srs_error_t on_rtcp_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
     srs_error_t on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
+    srs_error_t on_rtcp_xr(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
     srs_error_t on_rtcp_sender_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
     srs_error_t on_rtcp_receiver_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt);
 };

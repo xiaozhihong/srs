@@ -124,6 +124,14 @@ void SrsRtpNackList::get_nack_seqs(vector<uint16_t>& seqs)
     }
 }
 
+void SrsRtpNackList::update_rtt(int rtt)
+{
+    rtt_ = rtt;
+    srs_verbose("NACK, update rtt from %ld to %d", opts_.nack_interval, rtt);
+    // FIXME: limit min and max value.
+    opts_.nack_interval = rtt_;
+}
+
 SrsRtpQueue::SrsRtpQueue(size_t capacity, bool one_packet_per_frame)
     : nack_(this)
 {
@@ -138,9 +146,12 @@ SrsRtpQueue::SrsRtpQueue(size_t capacity, bool one_packet_per_frame)
     cycle_ = 0;
     jitter_ = 0;
     last_trans_time_ = 0;
+    
+    pre_number_of_packet_received_ = 0;
+    pre_number_of_packet_lossed_ = 0;
 
-    number_of_packet_reecived = 0;
-    number_of_packet_lossed = 0;
+    num_of_packet_received_ = 0;
+    number_of_packet_lossed_ = 0;
 
     one_packet_per_frame_ = one_packet_per_frame;
 }
@@ -164,7 +175,7 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
         head_sequence_ = seq;
         highest_sequence_ = seq;
 
-        ++number_of_packet_reecived;
+        ++num_of_packet_received_;
 
         last_trans_time_ = now/1000 - rtp_pkt->rtp_header.timestamp/90;
     } else {
@@ -177,18 +188,18 @@ srs_error_t SrsRtpQueue::insert(SrsRtpSharedPacket* rtp_pkt)
             {
                 int trans_time = now/1000 - rtp_pkt->rtp_header.timestamp/90;
 
-                int diff = trans_time - last_trans_time_;
-                if (diff < 0) {
-                    diff = -diff;
+                int cur_jitter = trans_time - last_trans_time_;
+                if (cur_jitter < 0) {
+                    cur_jitter = -cur_jitter;
                 }
 
                 last_trans_time_ = trans_time;
 
-                jitter_ = jitter_ * 15 / 16 + (static_cast<double>(diff) / 16.0);
+                jitter_ = (jitter_ * 15.0 / 16.0) + (static_cast<double>(cur_jitter) / 16.0);
                 srs_verbose("jitter=%.2f", jitter_);
             }
 
-            ++number_of_packet_reecived;
+            ++num_of_packet_received_;
             // seq > highest_sequence_
             if (seq_cmp(highest_sequence_, seq)) {
                 insert_into_nack_list(highest_sequence_ + 1, seq);
@@ -294,12 +305,46 @@ void SrsRtpQueue::notify_drop_seq(uint16_t seq)
     head_sequence_ = s;
 }
 
+uint32_t SrsRtpQueue::get_extended_highest_sequence()
+{
+    return cycle_ * 65536 + highest_sequence_;
+}
+
+uint8_t SrsRtpQueue::get_fraction_lost()
+{
+    int64_t total = (number_of_packet_lossed_ - pre_number_of_packet_lossed_ + num_of_packet_received_ - pre_number_of_packet_received_);
+    uint8_t loss = 0;
+    if (total > 0) {
+        loss = (number_of_packet_lossed_ - pre_number_of_packet_lossed_) * 256 / total;
+    }
+
+    pre_number_of_packet_lossed_ = number_of_packet_lossed_;
+    pre_number_of_packet_received_ = num_of_packet_received_;
+
+    return loss;
+}
+
+uint32_t SrsRtpQueue::get_cumulative_number_of_packets_lost()
+{
+    return number_of_packet_lossed_;
+}
+
+uint32_t SrsRtpQueue::get_interarrival_jitter()
+{
+    return static_cast<uint32_t>(jitter_);
+}
+
+void SrsRtpQueue::update_rtt(int rtt)
+{
+    nack_.update_rtt(rtt);
+}
+
 void SrsRtpQueue::insert_into_nack_list(uint16_t seq_start, uint16_t seq_end)
 {
     for (uint16_t s = seq_start; s != seq_end; ++s) {
         srs_verbose("loss seq=%u, insert into nack list", s);
         nack_.insert(s);
-        ++number_of_packet_lossed;
+        ++number_of_packet_lossed_;
     }
 }
 

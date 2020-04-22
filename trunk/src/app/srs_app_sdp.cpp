@@ -351,6 +351,8 @@ srs_error_t SrsMediaDesc::encode(std::ostringstream& os)
         os << "a=rtcp-rsize" << kCRLF;
     }
 
+    os << "a=rtcp-xr rcvr-rtt" << kCRLF;
+
     // FIXME:bitrate test
     os << "b=AS:5000000" << kCRLF;
 

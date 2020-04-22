@@ -111,6 +111,8 @@ static std::vector<std::string> get_candidate_ips()
     return candidate_ips;
 }
 
+static map<uint32_t, uint64_t> ssrc_lxr;
+
 uint64_t SrsNtp::kMagicNtpFractionalUnit = 1ULL << 32;
 
 SrsNtp::SrsNtp()
@@ -130,7 +132,7 @@ SrsNtp SrsNtp::from_time_ms(uint64_t ms)
     SrsNtp srs_ntp;
     srs_ntp.system_ms_ = ms;
     srs_ntp.ntp_second_ = ms / 1000;
-    srs_ntp.ntp_fractions_ = static_cast<double>(ms % 1000 / 1000.0) * kMagicNtpFractionalUnit;
+    srs_ntp.ntp_fractions_ = (static_cast<double>(ms % 1000 / 1000.0)) * kMagicNtpFractionalUnit;
     srs_ntp.ntp_ = (static_cast<uint64_t>(srs_ntp.ntp_second_) << 32) | srs_ntp.ntp_fractions_;
     return srs_ntp;
 }
@@ -1323,6 +1325,73 @@ srs_error_t SrsRtcSession::on_rtcp_ps_feedback(char* buf, int nb_buf, SrsUdpMuxS
     return err;
 }
 
+srs_error_t SrsRtcSession::on_rtcp_xr(char* buf, int nb_buf, SrsUdpMuxSocket* skt)
+{
+    srs_error_t err = srs_success;
+
+            /*
+			  0                   1                   2                   3
+              0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             |V=2|P|reserved |   PT=XR=207   |             length            |
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             |                              SSRC                             |
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             :                         report blocks                         :
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             */
+
+    SrsBuffer stream(buf, nb_buf);
+    uint8_t first = stream.read_1bytes();
+    uint8_t pt = stream.read_1bytes();
+    uint16_t length = (stream.read_2bytes() + 1) * 4;
+    uint32_t ssrc = stream.read_4bytes();
+
+    if (length != nb_buf) {
+        return srs_error_new(ERROR_RTC_RTCP_CHECK, "invalid XR packet, length=%u, nb_buf=%d", length, nb_buf);
+    }
+
+    while (stream.pos() + 4 < length) {
+        uint8_t bt = stream.read_1bytes();
+        stream.skip(1);
+        uint16_t block_length = (stream.read_2bytes() + 1) * 4;
+        srs_verbose("XR, bt=%u", bt);
+
+        if (stream.pos() + block_length - 4 > nb_buf) {
+            return srs_error_new(ERROR_RTC_RTCP_CHECK, "invalid XR packet block, block_length=%u, nb_buf=%d", block_length, nb_buf);
+        }
+
+        if (bt == 5) {
+            for (int i = 4; i < block_length; i += 12) {
+                uint32_t ssrc = stream.read_4bytes();
+                uint32_t lrr = stream.read_4bytes();
+                uint32_t dlrr = stream.read_4bytes();
+
+                SrsNtp cur_ntp = SrsNtp::from_time_ms(srs_update_system_time()/1000);
+                uint32_t compact_ntp = (cur_ntp.ntp_second_ << 16) | (cur_ntp.ntp_fractions_ >> 16);
+
+                int rtt_ntp = compact_ntp - lrr - dlrr;
+                int rtt = ((rtt_ntp * 1000) >> 16) + ((rtt_ntp >> 16) * 1000);
+                /*
+                lsr = (srs_ntp.ntp_second_ << 16) | (srs_ntp.ntp_fractions_ >> 16);
+                uint32_t dlsr = (srs_update_system_time() - ssrc_lsr[ssrc_of_sender]) / 1000;
+                rr_dlsr = ((dlsr / 1000) << 16) | ((dlsr % 1000) * 65536 / 1000);
+                */
+                srs_verbose("ssrc=%u, compact_ntp=%u, lrr=%u, dlrr=%u, rtt=%d", 
+                    ssrc, compact_ntp, lrr, dlrr, rtt);
+
+                if (ssrc == rtc_publisher->video_ssrc) {
+                    rtc_publisher->rtp_video_queue->update_rtt(rtt);
+                } else if (ssrc == rtc_publisher->audio_ssrc) {
+                    rtc_publisher->rtp_audio_queue->update_rtt(rtt);
+                }
+            }
+        }
+    }
+
+    return err;
+}
+
 srs_error_t SrsRtcSession::on_rtcp_sender_report(char* buf, int nb_buf, SrsUdpMuxSocket* skt)
 {
     srs_error_t err = srs_success;
@@ -1412,7 +1481,7 @@ block  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
             ssrc, fraction_lost, cumulative_number_of_packets_lost, highest_seq, jitter, lst, dlsr);
     }
 
-    static uint64_t last_sr_recv_time = 0;
+    static map<uint32_t, uint64_t> ssrc_lsr;
 
     // Response RR
     {
@@ -1420,11 +1489,95 @@ block  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
         SrsBuffer stream(buf, sizeof(buf));
         stream.write_1bytes(0x81);
         stream.write_1bytes(kRR);
-        stream.write_2bytes(6);
+        stream.write_2bytes(7);
         stream.write_4bytes(ssrc_of_sender);
+
+        SrsRtpQueue* rtp_queue = NULL;
+        string type = "unknown";
+        if (ssrc_of_sender == rtc_publisher->video_ssrc) {
+            rtp_queue = rtc_publisher->rtp_video_queue;
+            type = "video";
+        } else if (ssrc_of_sender == rtc_publisher->audio_ssrc) {
+            rtp_queue = rtc_publisher->rtp_audio_queue;
+            type = "audio";
+        }
+
+        uint8_t fraction_lost = rtp_queue->get_fraction_lost();
+        uint32_t cumulative_number_of_packets_lost = rtp_queue->get_cumulative_number_of_packets_lost() & 0x7FFFFF;
+        uint32_t extended_highest_sequence = rtp_queue->get_extended_highest_sequence();
+        uint32_t interarrival_jitter = rtp_queue->get_interarrival_jitter();
+
+        uint32_t lsr = 0;
+        uint32_t rr_dlsr = 0;
+        if (ssrc_lsr[ssrc_of_sender] > 0) {
+            lsr = (srs_ntp.ntp_second_ << 16) | (srs_ntp.ntp_fractions_ >> 16);
+            uint32_t dlsr = (srs_update_system_time() - ssrc_lsr[ssrc_of_sender]) / 1000;
+            rr_dlsr = ((dlsr / 1000) << 16) | ((dlsr % 1000) * 65536 / 1000);
+        }
+
+
+        stream.write_4bytes(ssrc_of_sender);
+        stream.write_1bytes(fraction_lost);
+        stream.write_3bytes(cumulative_number_of_packets_lost);
+        stream.write_4bytes(extended_highest_sequence);
+        stream.write_4bytes(interarrival_jitter);
+        stream.write_4bytes(lsr);
+        stream.write_4bytes(rr_dlsr);
+
+        srs_verbose("RR type=%s, ssrc=%u, fraction_lost=%u, cumulative_number_of_packets_lost=%u, extended_highest_sequence=%u, interarrival_jitter=%u",
+            type.c_str(), ssrc_of_sender, fraction_lost, cumulative_number_of_packets_lost, extended_highest_sequence, interarrival_jitter);
+
+        char protected_buf[kRtpPacketSize];
+        int nb_protected_buf = stream.pos();
+        if (dtls_session->protect_rtcp(protected_buf, stream.data(), nb_protected_buf) == srs_success) {
+            skt->sendto(protected_buf, nb_protected_buf, 0);
+        }
+
+        // XR
+        {
+            /*
+			  0                   1                   2                   3
+              0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             |V=2|P|reserved |   PT=XR=207   |             length            |
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             |                              SSRC                             |
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             :                         report blocks                         :
+             +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+			  0                   1                   2                   3
+   			  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   			 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   			 |     BT=4      |   reserved    |       block length = 2        |
+   			 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   			 |              NTP timestamp, most significant word             |
+   			 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   			 |             NTP timestamp, least significant word             |
+   			 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+             */
+            char buf[1024];
+            SrsBuffer stream(buf, sizeof(buf));
+            stream.write_1bytes(0x80);
+            stream.write_1bytes(kXR);
+            stream.write_2bytes(4);
+            stream.write_4bytes(ssrc_of_sender);
+            stream.write_1bytes(4);
+            stream.write_1bytes(0);
+            stream.write_2bytes(2);
+            stream.write_4bytes(cur_ntp.ntp_second_);
+            stream.write_4bytes(cur_ntp.ntp_fractions_);
+            ssrc_lxr[ssrc_of_sender] = srs_ntp.system_ms_;
+            //skt->sendto(stream.data(), stream.pos(), 0);
+            char protected_buf[kRtpPacketSize];
+            int nb_protected_buf = stream.pos();
+            if (dtls_session->protect_rtcp(protected_buf, stream.data(), nb_protected_buf) == srs_success) {
+                skt->sendto(protected_buf, nb_protected_buf, 0);
+            }
+        }
     }
 
-    last_sr_recv_time = srs_update_system_time();
+    ssrc_lsr[ssrc_of_sender] = srs_update_system_time();
 
     return err;
 }
@@ -1649,6 +1802,10 @@ srs_error_t SrsRtcSession::on_rtcp(SrsUdpMuxSocket* skt)
             }
             case kPsFb: {
                 err = on_rtcp_ps_feedback(ph, length, skt);
+                break;
+            }
+            case kXR: {
+                err = on_rtcp_xr(ph, length, skt);
                 break;
             }
             default:{
