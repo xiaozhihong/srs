@@ -650,6 +650,29 @@ if [[ $SRS_FFMPEG_FIT == YES ]]; then
 fi
 
 #####################################################################################
+# ngtcp2, for QUIC support.
+#####################################################################################
+if [[ $SRS_RTC == YES ]]; then
+    if [[ -f ${SRS_OBJS}/ngtcp2/lib/libngtcp2.a ]]; then
+        echo "The ngtcp2 is OK.";
+    else
+        echo "Building ngtcp2.";
+        (
+            rm -rf ${SRS_OBJS}/${SRS_PLATFORM}/ngtcp2 && cd ${SRS_OBJS}/${SRS_PLATFORM} &&
+            unzip ../../3rdparty/ngtcp2-master.zip && cd ngtcp2-master &&
+            autoreconf -i && ./configure PKG_CONFIG_PATH=${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib/pkgconfig \
+                LDFLAGS="-Wl,-rpath,${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib" \
+                --prefix=`pwd`/_release && make ${SRS_JOBS} && make install
+        )
+    fi
+    # check status
+    ret=$?; if [[ $ret -ne 0 ]]; then echo "Build ngtcp2 failed, ret=$ret"; exit $ret; fi
+    # Always update the links.
+    (cd ${SRS_OBJS} && rm -rf ngtcp2 && ln -sf ${SRS_PLATFORM}/ngtcp2-master/_release ngtcp2)
+    if [ ! -f ${SRS_OBJS}/ngtcp2/lib/libngtcp2.a ]; then echo "Build ngtcp2 failed."; exit -1; fi
+fi
+
+#####################################################################################
 # live transcoding, ffmpeg-4.1, x264-core157, lame-3.99.5, libaacplus-2.0.2.
 #####################################################################################
 # Always link the ffmpeg tools if exists.
