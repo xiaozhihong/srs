@@ -18,6 +18,7 @@ help=no
 SRS_HDS=NO
 SRS_SRT=NO
 SRS_RTC=YES
+SRS_QUIC=YES
 SRS_GB28181=NO
 SRS_CXX11=NO
 SRS_CXX14=NO
@@ -153,6 +154,7 @@ Features:
   --utest=on|off            Whether build the utest. Default: $(value2switch $SRS_UTEST)
   --srt=on|off              Whether build the SRT. Default: $(value2switch $SRS_SRT)
   --rtc=on|off              Whether build the WebRTC. Default: $(value2switch $SRS_RTC)
+  --quic=on|off             Whether build the QUIC. Default: $(value2switch $SRS_QUIC)
   --gb28181=on|off          Whether build the GB28181. Default: $(value2switch $SRS_GB28181)
   --cxx11=on|off            Whether enable the C++11. Default: $(value2switch $SRS_CXX11)
   --cxx14=on|off            Whether enable the C++14. Default: $(value2switch $SRS_CXX14)
@@ -313,6 +315,10 @@ function parse_user_option() {
         --without-rtc)                  SRS_RTC=NO                  ;;
         --rtc)                          if [[ $value == off ]]; then SRS_RTC=NO; else SRS_RTC=YES; fi    ;;
         --simulator)                    if [[ $value == off ]]; then SRS_SIMULATOR=NO; else SRS_SIMULATOR=YES; fi    ;;
+
+        --with-quic)                    SRS_QUIC=YES                ;;
+        --without-quic)                 SRS_QUIC=NO                 ;;
+        --quic)                         if [[ $value == off ]]; then SRS_QUIC=NO; else SRS_QUIC=YES; fi    ;;
 
         --with-gb28181)                 SRS_GB28181=YES             ;;
         --without-gb28181)              SRS_GB28181=NO              ;;
@@ -545,6 +551,7 @@ function regenerate_options() {
     if [ $SRS_CHERRYPY = YES ]; then        SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --cherrypy=on"; else        SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --cherrypy=off"; fi
     if [ $SRS_SRT = YES ]; then             SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --srt=on"; else             SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --srt=off"; fi
     if [ $SRS_RTC = YES ]; then             SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --rtc=on"; else             SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --rtc=off"; fi
+    if [ $SRS_QUIC = YES ]; then            SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --quic=on"; else            SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --quic=off"; fi
     if [ $SRS_SIMULATOR = YES ]; then       SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --simulator=on"; else       SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --simulator=off"; fi
     if [ $SRS_GB28181 = YES ]; then         SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --gb28181=on"; else         SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --gb28181=off"; fi
     if [ $SRS_CXX11 = YES ]; then           SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --cxx11=on"; else           SRS_AUTO_CONFIGURE="${SRS_AUTO_CONFIGURE} --cxx11=off"; fi

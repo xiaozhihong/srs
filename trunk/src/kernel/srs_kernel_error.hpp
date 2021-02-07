@@ -394,6 +394,17 @@
 #define ERROR_GB28181_H264_FRAME_FULL       6020
 
 ///////////////////////////////////////////////////////
+// RTC protocol error.
+///////////////////////////////////////////////////////
+#define ERROR_QUIC_PORT                     7000
+#define ERROR_QUIC_UDP                      7001
+#define ERROR_QUIC_CONN                     7002
+#define ERROR_QUIC_DATA                     7003
+#define ERROR_QUIC_TLS                      7004
+#define ERROR_QUIC_SERVER                   7005
+#define ERROR_QUIC_TOKEN                    7006
+
+///////////////////////////////////////////////////////
 // HTTP API error.
 ///////////////////////////////////////////////////////
 //#define ERROR_API_METHOD_NOT_ALLOWD

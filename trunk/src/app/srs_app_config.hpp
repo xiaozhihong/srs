@@ -552,6 +552,15 @@ public:
     bool get_rtc_nack_enabled(std::string vhost);
     bool get_rtc_twcc_enabled(std::string vhost);
 
+// quic section
+public:
+    virtual bool get_quic_server_enabled();
+    virtual bool get_quic_server_enabled(SrsConfDirective* conf);
+    virtual int get_quic_server_listen();
+    virtual int get_quic_server_reuseport();
+    virtual std::string get_quic_server_tls_key();
+    virtual std::string get_quic_server_tls_cert();
+
 // vhost specified section
 public:
     // Get the vhost directive by vhost name.

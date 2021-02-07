@@ -59,6 +59,11 @@ using namespace std;
 #include <srs_app_rtc_server.hpp>
 #endif
 
+#ifdef SRS_QUIC
+#include <srs_app_quic_conn.hpp>
+#include <srs_app_quic_server.hpp>
+#endif
+
 #ifdef SRS_SRT
 #include <srt_server.hpp>
 #endif
@@ -477,6 +482,10 @@ srs_error_t run_hybrid_server()
 
 #ifdef SRS_RTC
     _srs_hybrid->register_server(new RtcServerAdapter());
+#endif
+
+#ifdef SRS_QUIC
+    _srs_hybrid->register_server(new SrsQuicServerAdapter());
 #endif
 
     // Do some system initialize.

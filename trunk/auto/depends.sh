@@ -492,25 +492,28 @@ if [[ $SRS_SSL == YES && $SRS_USE_SYS_SSL != YES ]]; then
     if [[ $SRS_RTC == NO || $SRS_NASM == NO ]]; then
         OPENSSL_OPTIONS="$OPENSSL_OPTIONS -no-asm"
     fi
+    if [[ $SRS_QUIC == YES ]]; then
+        OPENSSL_OPTIONS=" enable-tls1_3  enable-ssl-trace"
+    fi
     # Mac OS X can have issues (its often a neglected platform).
     # @see https://wiki.openssl.org/index.php/Compilation_and_Installation
     if [[ $SRS_OSX == YES ]]; then
         export KERNEL_BITS=64;
     fi
     # Default to openssl 1.1, use 1.0 if required.
-    OPENSSL_CANDIDATE="openssl-1.1.0e" && OPENSSL_UNZIP="unzip -q ../../3rdparty/$OPENSSL_CANDIDATE.zip"
+    OPENSSL_CANDIDATE="openssl-1.1.1g_quic-draft-33" && OPENSSL_UNZIP="unzip -q ../../3rdparty/$OPENSSL_CANDIDATE.zip"
     if [[ $SRS_SSL_1_0 == YES ]]; then
         OPENSSL_CANDIDATE="openssl-OpenSSL_1_0_2u" && OPENSSL_UNZIP="tar xf ../../3rdparty/$OPENSSL_CANDIDATE.tar.gz"
     fi
     # cross build not specified, if exists flag, need to rebuild for no-arm platform.
     if [[ -f ${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib/libssl.a ]]; then
-        echo "Openssl-1.1.0e is ok.";
+        echo "Openssl-1.1.1g_quic-draft-33 is ok.";
     else
         echo "Building $OPENSSL_CANDIDATE.";
         (
             rm -rf ${SRS_OBJS}/${SRS_PLATFORM}/${OPENSSL_CANDIDATE} && cd ${SRS_OBJS}/${SRS_PLATFORM} &&
-            ${OPENSSL_UNZIP} && cd $OPENSSL_CANDIDATE && ${OPENSSL_CONFIG} --prefix=`pwd`/_release $OPENSSL_OPTIONS &&
-            make CC=${SRS_TOOL_CC} AR="${SRS_TOOL_AR} -rs" LD=${SRS_TOOL_LD} RANDLIB=${SRS_TOOL_RANDLIB} ${SRS_JOBS} && make install_sw &&
+            ${OPENSSL_UNZIP} && cd $OPENSSL_CANDIDATE && ${OPENSSL_CONFIG} $OPENSSL_OPTIONS --prefix=`pwd`/_release &&
+            make ${SRS_JOBS} && make install_sw &&
             cd .. && rm -rf openssl && ln -sf $OPENSSL_CANDIDATE/_release openssl
         )
     fi
@@ -652,16 +655,17 @@ fi
 #####################################################################################
 # ngtcp2, for QUIC support.
 #####################################################################################
-if [[ $SRS_RTC == YES ]]; then
+if [[ $SRS_QUIC == YES ]]; then
     if [[ -f ${SRS_OBJS}/ngtcp2/lib/libngtcp2.a ]]; then
         echo "The ngtcp2 is OK.";
     else
         echo "Building ngtcp2.";
         (
+            ABS_OBJS=`pwd`/${SRS_OBJS} &&
             rm -rf ${SRS_OBJS}/${SRS_PLATFORM}/ngtcp2 && cd ${SRS_OBJS}/${SRS_PLATFORM} &&
             unzip ../../3rdparty/ngtcp2-master.zip && cd ngtcp2-master &&
-            autoreconf -i && ./configure PKG_CONFIG_PATH=${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib/pkgconfig \
-                LDFLAGS="-Wl,-rpath,${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib" \
+            autoreconf -i && PKG_CONFIG_PATH="../../../objs/openssl/lib/pkgconfig" \
+                LDFLAGS="-Wl,-rpath,../../../objs/openssl/lib" ./configure \
                 --prefix=`pwd`/_release && make ${SRS_JOBS} && make install
         )
     fi

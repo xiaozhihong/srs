@@ -3581,6 +3581,7 @@ srs_error_t SrsConfig::check_normal_config()
             && n != "ff_log_level" && n != "grace_final_wait" && n != "force_grace_quit"
             && n != "grace_start_wait" && n != "empty_ip_ok" && n != "disable_daemon_for_docker"
             && n != "inotify_auto_reload" && n != "auto_reload_for_docker" && n != "tcmalloc_release_rate"
+            && n != "quic_server"
             ) {
             return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal directive %s", n.c_str());
         }
@@ -3653,6 +3654,15 @@ srs_error_t SrsConfig::check_normal_config()
                 && n != "encrypt" && n != "reuseport" && n != "merge_nalus" && n != "perf_stat" && n != "black_hole"
                 && n != "ip_family") {
                 return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal rtc_server.%s", n.c_str());
+            }
+        }
+    }
+    if (true) {
+        SrsConfDirective* conf = root->get("quic_server");
+        for (int i = 0; conf && i < (int)conf->directives.size(); i++) {
+            string n = conf->at(i)->name;
+            if (n != "enabled" && n != "listen" && n != "tls_key" && n != "tls_cert") {
+                return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal quic_server.%s", n.c_str());
             }
         }
     }
@@ -5137,6 +5147,99 @@ bool SrsConfig::get_rtc_twcc_enabled(string vhost)
     }
 
     return SRS_CONF_PERFER_TRUE(conf->arg0());
+}
+
+bool SrsConfig::get_quic_server_enabled()
+{
+    SrsConfDirective* conf = root->get("quic_server");
+    return get_quic_server_enabled(conf);
+}
+
+bool SrsConfig::get_quic_server_enabled(SrsConfDirective* conf)
+{
+    static bool DEFAULT = false;
+
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("enabled");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
+}
+
+int SrsConfig::get_quic_server_reuseport()
+{
+    static int DEFAULT = 1;
+#if !defined(SO_REUSEPORT)
+    return DEFAULT;
+#endif
+
+    SrsConfDirective* conf = root->get("quic_server");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("reuseport");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return ::atoi(conf->arg0().c_str());
+}
+
+int SrsConfig::get_quic_server_listen()
+{
+    static int DEFAULT = 8000;
+
+    SrsConfDirective* conf = root->get("quic_server");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("listen");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return ::atoi(conf->arg0().c_str());
+}
+
+std::string SrsConfig::get_quic_server_tls_key()
+{
+    static std::string DEFAULT = "";
+
+    SrsConfDirective* conf = root->get("quic_server");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("tls_key");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+std::string SrsConfig::get_quic_server_tls_cert()
+{
+    static std::string DEFAULT = "";
+
+    SrsConfDirective* conf = root->get("quic_server");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("tls_cert");
+    if (!conf || conf->arg0().empty()) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
 }
 
 SrsConfDirective* SrsConfig::get_vhost(string vhost, bool try_default_vhost)
