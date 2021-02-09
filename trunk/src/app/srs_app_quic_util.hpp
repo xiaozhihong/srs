@@ -39,7 +39,7 @@
 // TODO: FIXME: add annotation
 
 extern void quic_log_printf(void *user_data, const char *fmt, ...);
-extern int generate_rand_data(uint8_t* dest, size_t destlen);
+extern int srs_generate_rand_data(uint8_t* dest, size_t destlen);
 
 const size_t kTokenRandDatalen = 16;
 const uint8_t kTokenMagic = 0x36;

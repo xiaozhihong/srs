@@ -43,7 +43,7 @@ public:
     virtual ~SrsQuicTlsContext();
 public:
     SSL_CTX* get_ssl_ctx() const { return ssl_ctx_; }
-protected:
+public:
     virtual srs_error_t init(const std::string& key, const std::string& cert) = 0;
 protected:
     SSL_CTX* ssl_ctx_;

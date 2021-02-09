@@ -21,8 +21,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef SRS_APP_QUIC_CONN_HPP
-#define SRS_APP_QUIC_CONN_HPP
+#ifndef SRS_APP_QUIC_CLIENT_HPP
+#define SRS_APP_QUIC_CLIENT_HPP
 
 #include <srs_core.hpp>
 #include <srs_app_listener.hpp>
@@ -43,24 +43,28 @@
 
 class SrsQuicServer;
 class SrsUdpMuxSocket;
-class SrsQuicTlsServerSession;
+class SrsQuicTlsContext;
+class SrsQuicTlsSession;
+class SrsQuicToken;
 
-class SrsQuicConnection : virtual public ISrsHourGlass, virtual public ISrsResource
-    , virtual public ISrsDisposingHandler
+class SrsQuicClient : virtual public ISrsHourGlass
+        , virtual public ISrsCoroutineHandler
 {
-public:
-		bool disposing_;
 private:
-    SrsContextId cid_;
-    SrsQuicServer* server_;
     SrsHourGlass* timer_;
-    SrsUdpMuxSocket* mux_socket_;
+    srs_netfd_t udp_fd;
+    sockaddr_in local_addr_;
+    socklen_t local_addr_len_;
+    sockaddr_in remote_addr_;
+    socklen_t remote_addr_len_;
 private:
     ngtcp2_callbacks cb_;
     ngtcp2_settings settings_;
     ngtcp2_conn* conn_;
+    ngtcp2_cid dcid_;
     ngtcp2_cid scid_;
-
+private:
+    SrsSTCoroutine* trd_;
 private:
     struct SrsQuicCryptoBuffer {
         SrsQuicCryptoBuffer() : acked_offset(0) {}
@@ -68,43 +72,34 @@ private:
         size_t acked_offset;
     } crypto_buffer_[3];
 
-    SrsQuicTlsServerSession* tls_session_;
+    SrsQuicTlsContext* tls_context_;
+    SrsQuicTlsSession* tls_session_;
+    SrsQuicToken* quic_token_;
 public:
-    SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid);
-  	~SrsQuicConnection();
+    SrsQuicClient();
+  	~SrsQuicClient();
 private:
-    void update_mux_socket(SrsUdpMuxSocket* skt);
-private:
+    srs_error_t create_udp_socket();
+    srs_error_t create_udp_io_thread();
     ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
         sockaddr* remote_addr, const socklen_t remote_addrlen);
     ngtcp2_callbacks build_quic_callback();
     ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid original_dcid);
 public:
   	bool is_alive();
-    srs_error_t init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd);
-    srs_error_t on_data(SrsUdpMuxSocket* skt, const uint8_t* data, size_t size);
+    srs_error_t connect(const std::string& ip, uint16_t port);
+    srs_error_t on_data(const uint8_t* data, size_t size);
     ngtcp2_conn* conn() { return conn_; }
     std::string get_connid();
-// interface ISrsDisposingHandler
-public:
-    virtual void on_before_dispose(ISrsResource* c);
-    virtual void on_disposing(ISrsResource* c);
-// Interface ISrsResource.
-public:
-    virtual const SrsContextId& get_id();
-    virtual std::string desc();
-public:
-    void switch_to_context();
-    const SrsContextId& context_id();
 private:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
     srs_error_t try_to_write();
-// quic tls callback function
+    virtual srs_error_t cycle();
 public:
     int on_rx_key(ngtcp2_crypto_level level, const uint8_t *secret, size_t secretlen);
     int on_tx_key(ngtcp2_crypto_level level, const uint8_t *secret, size_t secretlen);
     int on_application_tx_key();
-    int write_server_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen);
+    int write_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen);
     int acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen);
     void set_tls_alert(uint8_t alert);
 // ngtcp2 callback function

@@ -161,8 +161,9 @@ srs_error_t SrsQuicServer::listen_udp()
 
     listen_sa_.sin_family = AF_INET;
     listen_sa_.sin_port = htons(port);
-    // TODO: FIXME  Currently we ignore return value.
-    inet_pton(AF_INET, ip.c_str(), &listen_sa_.sin_addr);
+    if (inet_pton(AF_INET, ip.c_str(), &listen_sa_.sin_addr) != 1) {
+        return srs_error_new(ERROR_QUIC_SERVER, "invalid addr=%s", ip.c_str());
+    }
 
     int nn_listeners = _srs_config->get_quic_server_reuseport();
     for (int i = 0; i < nn_listeners; i++) {
@@ -301,6 +302,7 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
     }
 
     switch (hd.type) {
+        // TODO: FIXME:
         case NGTCP2_PKT_INITIAL: {
         } break;
         case NGTCP2_PKT_0RTT: {

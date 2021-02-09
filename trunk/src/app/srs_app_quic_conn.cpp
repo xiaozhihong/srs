@@ -35,13 +35,17 @@ using namespace std;
 #include <srs_app_config.hpp>
 #include <srs_app_server.hpp>
 #include <srs_app_quic_server.hpp>
+#include <srs_app_quic_client.hpp>
 #include <srs_service_utility.hpp>
 #include <srs_service_st.hpp>
 #include <srs_protocol_utility.hpp>
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_util.hpp>
 
-const int kServerScidLen = 18;
+#define SRS_TICKID_QUIC 1
+
+const int kServerCidLen = 18;
+const int kClientCidLen = 18;
 
 static int cb_hp_mask(uint8_t *dest, const ngtcp2_crypto_cipher *hp,
     const ngtcp2_crypto_cipher_ctx *hp_ctx, const uint8_t *sample) 
@@ -107,7 +111,7 @@ static int cb_stream_close(ngtcp2_conn *conn, int64_t stream_id, uint64_t app_er
 static int cb_rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx,
     ngtcp2_rand_usage usage)
 {
-      return generate_rand_data(dest, destlen);
+      return srs_generate_rand_data(dest, destlen);
 }
 
 static int cb_get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
@@ -158,12 +162,10 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid)
 
     cid_ = cid;
     server_ = s;
-    timer_ = new SrsHourGlass(this, 10 * SRS_UTIME_MILLISECONDS);
-    sendonly_skt_ = NULL;
+    timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
+    mux_socket_ = NULL;
 
     conn_ = NULL;
-
-    tls_server_session_ = new SrsQuicTlsServerSession();
 }
 
 SrsQuicConnection::~SrsQuicConnection()
@@ -171,17 +173,17 @@ SrsQuicConnection::~SrsQuicConnection()
 		_srs_quic_manager->unsubscribe(this);
 
     srs_freep(timer_);
-    srs_freep(sendonly_skt_);
+    srs_freep(mux_socket_);
 
-    srs_freep(tls_server_session_);
+    srs_freep(tls_session_);
 }
 
-void SrsQuicConnection::update_sendonly_socket(SrsUdpMuxSocket* skt)
+void SrsQuicConnection::update_mux_socket(SrsUdpMuxSocket* skt)
 {
     // TODO: FIXME: Refine performance.
     string prev_peer_id, peer_id = skt->peer_id();
-    if (sendonly_skt_) {
-        prev_peer_id = sendonly_skt_->peer_id();
+    if (mux_socket_) {
+        prev_peer_id = mux_socket_->peer_id();
     }
 
     // Ignore if same address.
@@ -189,12 +191,12 @@ void SrsQuicConnection::update_sendonly_socket(SrsUdpMuxSocket* skt)
         return;
     }
 
-    srs_freep(sendonly_skt_);
-    sendonly_skt_ = skt->copy_sendonly();
+    srs_freep(mux_socket_);
+    mux_socket_ = skt->copy_sendonly();
 }
 
 ngtcp2_path SrsQuicConnection::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
-    sockaddr* remote_addr, const socklen_t remote_addrlen)
+        sockaddr* remote_addr, const socklen_t remote_addrlen)
 {
     ngtcp2_path path;
     path.local.addr = local_addr;
@@ -246,26 +248,21 @@ ngtcp2_callbacks SrsQuicConnection::build_quic_callback()
     return callback;
 }
 
-ngtcp2_settings SrsQuicConnection::build_quic_settings()
+ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid original_dcid)
 {
-}
+    ngtcp2_settings settings;
+    ngtcp2_settings_default(&settings);
 
-srs_error_t SrsQuicConnection::init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
-{
-    srs_error_t err = srs_success;
+    // TODO: FIXME: conf this values.
+    settings.log_printf = quic_log_printf;
+		settings.initial_ts = srs_get_system_time();
+  	settings.token.base = token;
+  	settings.token.len = tokenlen;
+  	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
+  	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
+  	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
 
-    cb_ = build_quic_callback();
-
-    ngtcp2_settings_default(&settings_);
-    settings_.log_printf = quic_log_printf;
-		settings_.initial_ts = srs_get_system_time();
-  	settings_.token.base = hd->token.base;
-  	settings_.token.len = hd->token.len;
-  	settings_.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
-  	settings_.cc_algo = NGTCP2_CC_ALGO_CUBIC;
-  	settings_.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
-
-		ngtcp2_transport_params& params = settings_.transport_params;
+		ngtcp2_transport_params& params = settings.transport_params;
   	params.initial_max_stream_data_bidi_local = 256 * 1024;
   	params.initial_max_stream_data_bidi_remote = 256 * 1024;
   	params.initial_max_stream_data_uni = 256 * 1024;;
@@ -275,21 +272,23 @@ srs_error_t SrsQuicConnection::init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
   	params.max_idle_timeout = 30 * NGTCP2_SECONDS;
   	params.stateless_reset_token_present = 1;
   	params.active_connection_id_limit = 7;
-    params.original_dcid = hd->dcid;
+    params.original_dcid = original_dcid;
 
-    // TODO: FIXME:
-    ngtcp2_path path;
-    path.local.addr = reinterpret_cast<sockaddr*>(server_->local_addr());
-    path.local.addrlen = server_->local_addrlen();
-    path.local.user_data = NULL;
-    path.remote.addr = reinterpret_cast<sockaddr*>(skt->peer_addr());
-    path.remote.addrlen = skt->peer_addrlen();
-    path.remote.user_data = NULL;
+    return settings;
+}
 
-    scid_.datalen = kServerScidLen;
-		for (size_t i = 0 ; i < scid_.datalen; ++i) {
-        scid_.data[i] = random() % 255;
-	  }
+srs_error_t SrsQuicConnection::init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
+{
+    srs_error_t err = srs_success;
+
+    cb_ = build_quic_callback();
+    settings_ = build_quic_settings(hd->token.base, hd->token.len, hd->dcid);
+
+    ngtcp2_path path = build_quic_path(reinterpret_cast<sockaddr*>(server_->local_addr()), 
+        server_->local_addrlen(), reinterpret_cast<sockaddr*>(skt->peer_addr()), skt->peer_addrlen());
+
+    scid_.datalen = kServerCidLen;
+    srs_generate_rand_data(scid_.data, scid_.datalen);
 
     int ret = ngtcp2_conn_server_new(&conn_, &hd->scid, &scid_, &path,
         hd->version, &cb_, &settings_, NULL, this);
@@ -298,14 +297,15 @@ srs_error_t SrsQuicConnection::init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
 				return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed,ret=%d", ret);
     }
 
-    if ((err = tls_server_session_->init(server_->get_quic_tls_server_ctx(), this)) != srs_success) {
+    tls_session_ = new SrsQuicTlsServerSession();
+    if ((err = tls_session_->init(server_->get_quic_tls_server_ctx(), this)) != srs_success) {
         return srs_error_wrap(err, "tls session init failed");
     }
 
-    ngtcp2_conn_set_tls_native_handle(conn_, tls_server_session_->get_ssl());
+    ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
 
     // TODO: FIXME: need schecule
-    if ((err = timer_->tick(1, 10 * SRS_UTIME_MILLISECONDS)) != srs_success) {
+    if ((err = timer_->tick(SRS_TICKID_QUIC, 10 * SRS_UTIME_MILLISECONDS)) != srs_success) {
         return srs_error_wrap(err, "quic tick");
     }
 
@@ -313,7 +313,14 @@ srs_error_t SrsQuicConnection::init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
         return srs_error_wrap(err, "timer start failed");
     }
 
-    update_sendonly_socket(skt);
+    update_mux_socket(skt);
+
+    static int n = 0;
+    if (n == 0) {
+        SrsQuicClient* client = new SrsQuicClient();
+        client->connect("127.0.0.1", 12000);
+        ++n;
+    }
 
     return err;
 }
@@ -322,15 +329,10 @@ srs_error_t SrsQuicConnection::on_data(SrsUdpMuxSocket* skt, const uint8_t* data
 {
     srs_error_t err = srs_success;
 
-    update_sendonly_socket(skt);
+    update_mux_socket(skt);
 
-    ngtcp2_path path;
-    path.local.addr = reinterpret_cast<sockaddr*>(server_->local_addr());
-    path.local.addrlen = server_->local_addrlen();
-    path.local.user_data = NULL;
-    path.remote.addr = reinterpret_cast<sockaddr*>(skt->peer_addr());
-    path.remote.addrlen = skt->peer_addrlen();
-    path.remote.user_data = NULL;
+    ngtcp2_path path = build_quic_path(reinterpret_cast<sockaddr*>(server_->local_addr()), 
+        server_->local_addrlen(), reinterpret_cast<sockaddr*>(skt->peer_addr()), skt->peer_addrlen());
 
 		ngtcp2_pkt_info pkt_info;
 		int ret = ngtcp2_conn_read_pkt(conn_, &path, &pkt_info, data, size, srs_get_system_time());
@@ -458,8 +460,7 @@ int SrsQuicConnection::on_application_tx_key()
     return 0;
 }
 
-int SrsQuicConnection::write_server_handshake(ngtcp2_crypto_level level, 
-        const uint8_t *data, size_t datalen) 
+int SrsQuicConnection::write_server_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen) 
 {
     SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)level];
     crypto.data.push_back(string(reinterpret_cast<const char*>(data), datalen));
@@ -470,8 +471,7 @@ int SrsQuicConnection::write_server_handshake(ngtcp2_crypto_level level,
     return 0;
 }
 
-int SrsQuicConnection::acked_crypto_offset(ngtcp2_crypto_level crypto_level,
-                                        uint64_t offset, uint64_t datalen) 
+int SrsQuicConnection::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen) 
 {
   	SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)crypto_level];
 
@@ -498,8 +498,7 @@ int SrsQuicConnection::recv_stream_data(uint32_t flags, int64_t stream_id, uint6
     return 0;
 }
 
-int SrsQuicConnection::recv_crypto_data(ngtcp2_crypto_level crypto_level, 
-        const uint8_t* data, size_t datalen)
+int SrsQuicConnection::recv_crypto_data(ngtcp2_crypto_level crypto_level, const uint8_t* data, size_t datalen)
 {
     int ret = ngtcp2_crypto_read_write_crypto_data(conn_, crypto_level, data, datalen);
     if (ret != 0) {
@@ -518,7 +517,7 @@ int SrsQuicConnection::handshake_completed()
     srs_trace("quic handshake completed");
 		uint8_t token[kMaxTokenLen];
     size_t tokenlen = sizeof(token);
-    if (server_->get_quic_token()->generate_token(token, tokenlen, (const sockaddr*)sendonly_skt_->peer_addr()) != 0) {
+    if (server_->get_quic_token()->generate_token(token, tokenlen, (const sockaddr*)mux_socket_->peer_addr()) != 0) {
         return 0;
     }
 
@@ -545,11 +544,9 @@ int SrsQuicConnection::on_stream_close(int64_t stream_id, uint64_t app_error_cod
 
 int SrsQuicConnection::get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen)
 {
-    // TODO: FIXME:
     cid->datalen = cidlen;
-		for (size_t i = 0 ; i < cid->datalen; ++i) {
-        cid->data[i] = random() % 255;
-	  }
+    srs_generate_rand_data(cid->data, cid->datalen);
+
     ngtcp2_crypto_md md = crypto_md_sha256();
     if (ngtcp2_crypto_generate_stateless_reset_token(token, &md, server_->get_quic_token()->get_static_secret(), 
             server_->get_quic_token()->get_static_secret_len(), cid) != 0) {
@@ -621,8 +618,8 @@ srs_error_t SrsQuicConnection::try_to_write()
             break;
         }
 
-        if (nwrite > 0 && sendonly_skt_) {
-            if ((err = sendonly_skt_->sendto(buf, nwrite, 0)) != srs_success) {
+        if (nwrite > 0 && mux_socket_) {
+            if ((err = mux_socket_->sendto(buf, nwrite, 0)) != srs_success) {
                 return srs_error_wrap(err, "quic send packet failed");
             }
 

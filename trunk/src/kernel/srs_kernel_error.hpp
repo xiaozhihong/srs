@@ -403,6 +403,7 @@
 #define ERROR_QUIC_TLS                      7004
 #define ERROR_QUIC_SERVER                   7005
 #define ERROR_QUIC_TOKEN                    7006
+#define ERROR_QUIC_CLIENT                   7007
 
 ///////////////////////////////////////////////////////
 // HTTP API error.

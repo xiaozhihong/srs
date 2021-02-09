@@ -64,7 +64,7 @@ void quic_log_printf(void *user_data, const char *fmt, ...)
     srs_trace("ngtcp2 quic log # %s", buf);
 }
 
-int generate_rand_data(uint8_t* dest, size_t destlen)
+int srs_generate_rand_data(uint8_t* dest, size_t destlen)
 {
 		for (size_t i = 0 ; i < destlen; ++i) {
         dest[i] = random() % 255;
@@ -129,7 +129,7 @@ int SrsQuicToken::generate_secret(uint8_t *secret, size_t secretlen)
 
     srs_assert(sizeof(md) == secretlen);
 
-    generate_rand_data(rand, sizeof(rand));
+    srs_generate_rand_data(rand, sizeof(rand));
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (ctx == NULL) {
@@ -186,7 +186,7 @@ int SrsQuicToken::generate_token(uint8_t *token, size_t &tokenlen, const sockadd
     uint8_t iv[32];
     size_t ivlen = sizeof(iv);
 
-    generate_rand_data(rand_data, sizeof(rand_data));
+    srs_generate_rand_data(rand_data, sizeof(rand_data));
 
     if (derive_token_key(key, keylen, iv, ivlen, rand_data, sizeof(rand_data)) != 0) {
         return -1;
