@@ -299,7 +299,7 @@ if [[ $SRS_FFMPEG_FIT == YES ]]; then
 fi
 if [[ $SRS_QUIC == YES ]]; then
     MODULE_FILES+=("srs_app_quic_conn" "srs_app_quic_server" "srs_app_quic_tls" "srs_app_quic_util"
-        "srs_app_quic_client")
+        "srs_app_quic_client" "srs_app_quic_transport")
 fi
 if [[ $SRS_GB28181 == YES ]]; then
     MODULE_FILES+=("srs_app_gb28181" "srs_app_gb28181_sip" "srs_app_gb28181_jitbuffer")
