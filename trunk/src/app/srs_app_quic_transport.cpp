@@ -47,15 +47,6 @@ using namespace std;
 const int kServerCidLen = 18;
 const int kClientCidLen = 18;
 
-static int cb_hp_mask(uint8_t *dest, const ngtcp2_crypto_cipher *hp,
-    const ngtcp2_crypto_cipher_ctx *hp_ctx, const uint8_t *sample) 
-{
-  	if (ngtcp2_crypto_hp_mask(dest, hp, hp_ctx, sample) != 0) {
-  	  	return NGTCP2_ERR_CALLBACK_FAILURE;
-  	}
-  	return 0;
-}
-
 static int cb_recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
     uint64_t offset, const uint8_t *data, size_t datalen, void *user_data, void *stream_user_data) 
 {
@@ -92,31 +83,31 @@ static int cb_acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
 static int cb_stream_open(ngtcp2_conn *conn, int64_t stream_id, void *user_data) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-  	return quic_transport->on_stream_open(stream_id);
+    return quic_transport->on_stream_open(stream_id);
 }
 
 static int cb_stream_close(ngtcp2_conn *conn, int64_t stream_id, uint64_t app_error_code,
     void *user_data, void *stream_user_data) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-  	return quic_transport->on_stream_close(stream_id, app_error_code);
+    return quic_transport->on_stream_close(stream_id, app_error_code);
 }
 
 static int cb_rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx,
     ngtcp2_rand_usage usage)
 {
-      return srs_generate_rand_data(dest, destlen);
+    return srs_generate_rand_data(dest, destlen);
 }
 
 static int cb_get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
     size_t cidlen, void *user_data) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-  	return quic_transport->get_new_connection_id(cid, token, cidlen);
+    return quic_transport->get_new_connection_id(cid, token, cidlen);
 }
 
 static int cb_path_validation(ngtcp2_conn *conn, const ngtcp2_path *path,
-				ngtcp2_path_validation_result res, void *user_data) 
+        ngtcp2_path_validation_result res, void *user_data) 
 {
     return 0;
 }
@@ -135,7 +126,7 @@ static int cb_extend_max_remote_streams_bidi(ngtcp2_conn *conn, uint64_t max_str
 static int cb_extend_max_stream_data(ngtcp2_conn *conn, int64_t stream_id,
     uint64_t max_data, void *user_data, void *stream_user_data) 
 {
-  	return 0;
+    return 0;
 }
 
 static int cb_update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secret,
@@ -144,7 +135,7 @@ static int cb_update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secr
     size_t secretlen, void *user_data) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-  	return quic_transport->update_key(rx_secret, tx_secret, rx_aead_ctx, rx_iv, 
+    return quic_transport->update_key(rx_secret, tx_secret, rx_aead_ctx, rx_iv, 
         tx_aead_ctx, tx_iv, current_tx_secret, current_rx_secret, secretlen);
 }
 
@@ -152,9 +143,12 @@ SrsQuicTransport::SrsQuicTransport()
 {
     timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
     conn_ = NULL;
+    udp_fd_ = NULL;
+    local_addr_len_ = 0;
+    remote_addr_len_ = 0;
     tls_session_ = NULL;
 
-		cb_.client_initial = ngtcp2_crypto_client_initial_cb;
+    cb_.client_initial = ngtcp2_crypto_client_initial_cb;
     cb_.recv_client_initial = ngtcp2_crypto_recv_client_initial_cb;
     cb_.recv_crypto_data = cb_recv_crypto_data;
     cb_.handshake_completed = cb_handshake_completed;
@@ -177,7 +171,7 @@ SrsQuicTransport::SrsQuicTransport()
     cb_.update_key = cb_update_key;
     cb_.path_validation = cb_path_validation;
     cb_.select_preferred_addr = NULL;
-    cb_.stream_reset = NULL;
+    cb_.stream_reset = cb_stream_reset;
     cb_.extend_max_remote_streams_bidi = cb_extend_max_remote_streams_bidi;
     cb_.extend_max_remote_streams_uni = NULL;
     cb_.extend_max_stream_data = cb_extend_max_stream_data;
@@ -196,25 +190,39 @@ SrsQuicTransport::~SrsQuicTransport()
     // TODO: FIXME: free quic conn
 }
 
+ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
+        sockaddr* remote_addr, const socklen_t remote_addrlen)
+{
+    ngtcp2_path path;
+    path.local.addr = local_addr;
+    path.local.addrlen = local_addrlen;
+    path.local.user_data = NULL;
+    path.remote.addr = remote_addr;
+    path.remote.addrlen = remote_addrlen;
+    path.remote.user_data = NULL;
+
+    return path;
+}
+
 srs_error_t SrsQuicTransport::on_data(ngtcp2_path* path, const uint8_t* data, size_t size)
 {
     srs_error_t err = srs_success;
 
-		ngtcp2_pkt_info pkt_info;
-		int ret = ngtcp2_conn_read_pkt(conn_, path, &pkt_info, data, size, srs_get_system_time());
-		if (ret != 0) {
-    		switch (ret) {
-            // TODO: FIXME: process case below.
-    				case NGTCP2_ERR_DRAINING:
-    				case NGTCP2_ERR_RETRY:
-    				case NGTCP2_ERR_REQUIRED_TRANSPORT_PARAM:
-    				case NGTCP2_ERR_MALFORMED_TRANSPORT_PARAM:
-    				case NGTCP2_ERR_TRANSPORT_PARAM:
-    				case NGTCP2_ERR_DROP_CONN:
-    				default: break;
-    		}
-				return srs_error_new(ERROR_QUIC_DATA, "quic read packet failed,ret=%d", ret);
-		}
+    ngtcp2_pkt_info pkt_info;
+    int ret = ngtcp2_conn_read_pkt(conn_, path, &pkt_info, data, size, srs_get_system_time());
+    if (ret != 0) {
+        switch (ret) {
+          // TODO: FIXME: process case below.
+            case NGTCP2_ERR_DRAINING:
+            case NGTCP2_ERR_RETRY:
+            case NGTCP2_ERR_REQUIRED_TRANSPORT_PARAM:
+            case NGTCP2_ERR_MALFORMED_TRANSPORT_PARAM:
+            case NGTCP2_ERR_TRANSPORT_PARAM:
+            case NGTCP2_ERR_DROP_CONN:
+            default: break;
+        }
+        return srs_error_new(ERROR_QUIC_DATA, "quic read packet failed,ret=%d", ret);
+    }
 
     io_write_streams();
     return err;
@@ -279,6 +287,7 @@ int SrsQuicTransport::on_application_tx_key()
 
 int SrsQuicTransport::write_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen) 
 {
+    srs_trace("quic callback function %s called", __func__);
     SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)level];
     crypto.data.push_back(string(reinterpret_cast<const char*>(data), datalen));
 
@@ -290,7 +299,7 @@ int SrsQuicTransport::write_handshake(ngtcp2_crypto_level level, const uint8_t *
 
 int SrsQuicTransport::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen) 
 {
-  	SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)crypto_level];
+    SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)crypto_level];
 
     for (deque<string>& d = crypto.data; ! d.empty() && crypto.acked_offset + d.front().size() <= offset + datalen;) {
         string& v = d.front();
@@ -337,18 +346,20 @@ int SrsQuicTransport::handshake_completed()
 
 int SrsQuicTransport::on_stream_open(int64_t stream_id)
 {
-		srs_trace("stream %ld open", stream_id);
+    srs_trace("stream %ld open", stream_id);
     return 0;
 }
 
 int SrsQuicTransport::on_stream_close(int64_t stream_id, uint64_t app_error_code)
 {
-		srs_trace("stream %ld close, app_error_code=%lu", stream_id, app_error_code);
+    srs_trace("stream %ld close, app_error_code=%lu", stream_id, app_error_code);
     return 0;
 }
 
 int SrsQuicTransport::get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen)
 {
+    srs_trace("quic callback function %s called", __func__);
+
     cid->datalen = cidlen;
     srs_generate_rand_data(cid->data, cid->datalen);
 
@@ -364,15 +375,15 @@ int SrsQuicTransport::update_key(uint8_t *rx_secret, uint8_t *tx_secret,
         ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv, ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv,
         const uint8_t *current_rx_secret, const uint8_t *current_tx_secret, size_t secretlen) 
 {
-		uint8_t rx_key[64];
-		uint8_t tx_key[64];
+    uint8_t rx_key[64];
+    uint8_t tx_key[64];
 
-  	if (ngtcp2_crypto_update_key(conn_, rx_secret, tx_secret, rx_aead_ctx,
+    if (ngtcp2_crypto_update_key(conn_, rx_secret, tx_secret, rx_aead_ctx,
                                rx_key, rx_iv, tx_aead_ctx, tx_key,
                                tx_iv, current_rx_secret, current_tx_secret,
                                secretlen) != 0) {
         return NGTCP2_ERR_CALLBACK_FAILURE;
-  	}
+    }
 
     return 0;
 }
@@ -408,15 +419,30 @@ srs_error_t SrsQuicTransport::io_write_streams()
 
         int nwrite = ngtcp2_conn_writev_stream(conn_, &path, &pi, buf,
             NGTCP2_MAX_PKTLEN_IPV4, &ndatalen, flags, stream_id, &vec, vcnt, srs_get_system_time());
+
+        srs_trace("quic transport write %d bytes", nwrite);
         if (nwrite < 0) {
             return srs_error_new(ERROR_QUIC_CONN, "write stream failed");
         }
+
         if (nwrite == 0) {
             break;
         }
 
-        send_packet();
+        if (send_packet(&path, buf, nwrite) <= 0) {
+            srs_error("send quic packet failed");
+        }
     }
 
     return err;
+}
+
+int SrsQuicTransport::send_packet(ngtcp2_path* path, uint8_t* data, const int size)
+{
+    if (! udp_fd_) {
+        return -1;
+    }
+
+    return srs_sendto(udp_fd_, data, size, path->remote.addr, 
+                      path->remote.addrlen, 0);
 }

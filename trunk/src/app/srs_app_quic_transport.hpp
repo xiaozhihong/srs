@@ -48,23 +48,26 @@ class SrsQuicTransport : virtual public ISrsHourGlass
 public:
     SrsQuicTransport();
   	virtual ~SrsQuicTransport();
-private:
+protected:
     virtual ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
-        sockaddr* remote_addr, const socklen_t remote_addrlen) = 0;
-    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid original_dcid) = 0;
+        sockaddr* remote_addr, const socklen_t remote_addrlen);
+    virtual ngtcp2_settings build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid) = 0;
 public:
-    virtual srs_error_t init() = 0;
+	virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
+                sockaddr* remote_addr, const socklen_t remote_addrlen,
+                ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
+                uint8_t* token, const size_t tokenle) = 0;
     srs_error_t on_data(ngtcp2_path* path, const uint8_t* data, size_t size);
     ngtcp2_conn* conn() { return conn_; }
     std::string get_conn_id();
 // interface ISrsHourGlass
-private:
+protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
-private:
+protected:
     virtual srs_error_t io_write_streams();
     virtual uint8_t* get_static_secret() = 0;
     virtual size_t get_static_secret_len() = 0;
-    virtual int send_packet() = 0;
+    virtual int send_packet(ngtcp2_path* path, uint8_t* data, const int size);
     virtual int check_conn_status() = 0;
 // quic tls callback function
 public:
@@ -79,20 +82,28 @@ public:
     int recv_crypto_data(ngtcp2_crypto_level crypto_level, const uint8_t* data, size_t datalen);
     virtual int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
     virtual int handshake_completed();
-		virtual int on_stream_open(int64_t stream_id);
-		virtual int on_stream_close(int64_t stream_id, uint64_t app_error_code);
+	virtual int on_stream_open(int64_t stream_id);
+	virtual int on_stream_close(int64_t stream_id, uint64_t app_error_code);
     int get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen);
     int update_key(uint8_t *rx_secret, uint8_t *tx_secret, ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
             ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv, const uint8_t *current_rx_secret,
             const uint8_t *current_tx_secret, size_t secretlen);
-private:
+protected:
     SrsHourGlass* timer_;
-private:
+protected:
     ngtcp2_callbacks cb_;
     ngtcp2_settings settings_;
     ngtcp2_conn* conn_;
     ngtcp2_cid scid_;
-private:
+    ngtcp2_cid dcid_;
+    ngtcp2_cid origin_dcid_;
+protected:
+	srs_netfd_t udp_fd_;
+    sockaddr_in local_addr_;
+    socklen_t local_addr_len_;
+    sockaddr_in remote_addr_;
+    socklen_t remote_addr_len_;
+protected:
     struct SrsQuicCryptoBuffer {
         SrsQuicCryptoBuffer() : acked_offset(0) {}
         std::deque<std::string> data;

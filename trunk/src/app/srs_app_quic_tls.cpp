@@ -70,8 +70,8 @@ static int flush_flight(SSL *ssl)
 
 static int send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert) 
 {
-  	SrsQuicConnection* quic_conn = static_cast<SrsQuicConnection*>(SSL_get_app_data(ssl));
-  	quic_conn->set_tls_alert(alert);
+  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
+  	quic_transport->set_tls_alert(alert);
 
   	return 1;
 }
@@ -85,33 +85,32 @@ static int alpn_select_proto_hq_cb(SSL *ssl, const uint8_t **out,
                                   uint8_t *outlen, const uint8_t *in,
                                   unsigned int inlen, void *arg) 
 {
-    SrsQuicConnection* quic_conn = static_cast<SrsQuicConnection*>(SSL_get_app_data(ssl));
+    SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
     const uint8_t *alpn;
     size_t alpnlen;
-    uint32_t version = ngtcp2_conn_get_negotiated_version(quic_conn->conn());
+    uint32_t version = ngtcp2_conn_get_negotiated_version(quic_transport->conn());
 
     switch (version) {
-    		case QUIC_VER_DRAFT29:
-    		  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft29.data());
-    		  	alpnlen = kHqAlpnDraft29.size();
-    		  	break;
-    		case QUIC_VER_DRAFT30:
-    		  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft30.data());
-    		  	alpnlen = kHqAlpnDraft30.size();
-    		  	break;
-    		case QUIC_VER_DRAFT31:
-    		  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft31.data());
-    		  	alpnlen = kHqAlpnDraft31.size();
-    		  	break;
-    		case QUIC_VER_DRAFT32:
-    		  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft32.data());
-    		  	alpnlen = kHqAlpnDraft32.size();
-    		  	break;
-    		default:
+    	case QUIC_VER_DRAFT29:
+    	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft29.data());
+    	  	alpnlen = kHqAlpnDraft29.size();
+    	  	break;
+    	case QUIC_VER_DRAFT30:
+    	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft30.data());
+    	  	alpnlen = kHqAlpnDraft30.size();
+    	  	break;
+    	case QUIC_VER_DRAFT31:
+    	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft31.data());
+    	  	alpnlen = kHqAlpnDraft31.size();
+    	  	break;
+    	case QUIC_VER_DRAFT32:
+    	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft32.data());
+    	  	alpnlen = kHqAlpnDraft32.size();
+    	  	break;
+    	default:
             srs_warn("unsupport quic version=%u", version);
-    		  	return SSL_TLSEXT_ERR_ALERT_FATAL;
+    		return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
-
 
     for (const uint8_t* p = in; p + alpnlen <= in + inlen; p += *p + 1) {
         if (memcmp(alpn, p, alpnlen) == 0) {
@@ -131,20 +130,20 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
                                   const uint8_t *read_secret,
                                   const uint8_t *write_secret, size_t secret_len) 
 {
-  	SrsQuicConnection* quic_conn = static_cast<SrsQuicConnection*>(SSL_get_app_data(ssl));
+  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
   	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
-    int ret = quic_conn->on_rx_key(level, read_secret, secret_len);
+    int ret = quic_transport->on_rx_key(level, read_secret, secret_len);
     if (ret != 0) {
         return 0;
     }
   	if (write_secret) {
-        ret = quic_conn->on_tx_key(level, write_secret, secret_len);
+        ret = quic_transport->on_tx_key(level, write_secret, secret_len);
         if (ret != 0) {
             return 0;
         }
   	  	if (level == NGTCP2_CRYPTO_LEVEL_APPLICATION && 
-            quic_conn->on_application_tx_key() != 0) {
+            quic_transport->on_application_tx_key() != 0) {
   	    		return 0;
   	  	}
   	}
@@ -155,10 +154,10 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
 static int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
                        const uint8_t *data, size_t len) 
 {
-  	SrsQuicConnection* quic_conn = static_cast<SrsQuicConnection*>(SSL_get_app_data(ssl));
+  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
   	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
-  	quic_conn->write_server_handshake(level, data, len);
+  	quic_transport->write_handshake(level, data, len);
 
   	return 1;
 }
@@ -172,20 +171,20 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
                                   const uint8_t *read_secret,
                                   const uint8_t *write_secret, size_t secret_len) 
 {
-  	SrsQuicClient* quic_conn = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
+  	SrsQuicClient* quic_transport = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
   	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
     if (read_secret) {
-        if (quic_conn->on_rx_key(level, read_secret, secret_len) != 0) {
+        if (quic_transport->on_rx_key(level, read_secret, secret_len) != 0) {
             return 0;
         }
   	  	if (level == NGTCP2_CRYPTO_LEVEL_APPLICATION && 
-            quic_conn->on_application_tx_key() != 0) {
+            quic_transport->on_application_tx_key() != 0) {
   	    		return 0;
   	  	}
     }
 
-    if (quic_conn->on_tx_key(level, write_secret, secret_len) != 0) {
+    if (quic_transport->on_tx_key(level, write_secret, secret_len) != 0) {
         return 0;
     }
 
@@ -195,10 +194,10 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
 static int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
                        const uint8_t *data, size_t len) 
 {
-  	SrsQuicClient* quic_conn = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
+  	SrsQuicClient* quic_transport = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
   	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
-  	quic_conn->write_handshake(level, data, len);
+  	quic_transport->write_handshake(level, data, len);
 
   	return 1;
 }
@@ -414,6 +413,9 @@ srs_error_t SrsQuicTlsServerSession::init(const SrsQuicTlsContext* quic_tls_ctx,
     SSL_set_app_data(ssl_, handler);
     SSL_set_accept_state(ssl_);
     SSL_set_quic_early_data_enabled(ssl_, 1);
+
+    SSL_set_msg_callback(ssl_, SSL_trace);
+    SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
 
     return err;
 }

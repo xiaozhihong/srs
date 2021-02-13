@@ -223,7 +223,7 @@ srs_error_t SrsQuicServer::on_udp_packet(SrsUdpMuxSocket* skt)
         }
     }
 
-    return quic_conn->on_data(skt, data, size);
+    return quic_conn->on_udp_data(skt, data, size);
 }
 
 srs_error_t SrsQuicServer::notify(int type, srs_utime_t interval, srs_utime_t tick)
@@ -313,7 +313,8 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
 
     SrsContextId cid = _srs_context->get_id();
     SrsQuicConnection* quic_conn = new SrsQuicConnection(this, cid);
-    if ((err = quic_conn->init(skt, &hd)) != srs_success) {
+    if ((err = quic_conn->accept(skt, &hd)) != srs_success) {
+        srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
     }
     string conn_id = quic_conn->get_connid();

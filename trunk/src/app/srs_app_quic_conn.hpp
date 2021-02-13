@@ -32,6 +32,7 @@
 #include <srs_app_reload.hpp>
 #include <srs_service_conn.hpp>
 #include <srs_app_conn.hpp>
+#include <srs_app_quic_transport.hpp>
 
 #include <deque>
 #include <string>
@@ -45,45 +46,35 @@ class SrsQuicServer;
 class SrsUdpMuxSocket;
 class SrsQuicTlsServerSession;
 
-class SrsQuicConnection : virtual public ISrsHourGlass, virtual public ISrsResource
+class SrsQuicConnection : public SrsQuicTransport, virtual public ISrsResource
     , virtual public ISrsDisposingHandler
 {
 public:
-		bool disposing_;
+    bool disposing_;
 private:
     SrsContextId cid_;
     SrsQuicServer* server_;
-    SrsHourGlass* timer_;
-    SrsUdpMuxSocket* mux_socket_;
-private:
-    ngtcp2_callbacks cb_;
-    ngtcp2_settings settings_;
-    ngtcp2_conn* conn_;
-    ngtcp2_cid scid_;
-
-private:
-    struct SrsQuicCryptoBuffer {
-        SrsQuicCryptoBuffer() : acked_offset(0) {}
-        std::deque<std::string> data;
-        size_t acked_offset;
-    } crypto_buffer_[3];
-
-    SrsQuicTlsServerSession* tls_session_;
 public:
     SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid);
   	~SrsQuicConnection();
+public:
+    srs_error_t accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd);
+    srs_error_t on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* data, int size);
 private:
-    void update_mux_socket(SrsUdpMuxSocket* skt);
-private:
-    ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
+    virtual ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
         sockaddr* remote_addr, const socklen_t remote_addrlen);
-    ngtcp2_callbacks build_quic_callback();
-    ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid original_dcid);
+    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
+private:
+	virtual uint8_t* get_static_secret();
+    virtual size_t get_static_secret_len();
+    virtual int check_conn_status();
+    virtual int handshake_completed();
 public:
   	bool is_alive();
-    srs_error_t init(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd);
-    srs_error_t on_data(SrsUdpMuxSocket* skt, const uint8_t* data, size_t size);
-    ngtcp2_conn* conn() { return conn_; }
+    virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
+                sockaddr* remote_addr, const socklen_t remote_addrlen,
+                ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
+                uint8_t* token, const size_t tokenlen);
     std::string get_connid();
 // interface ISrsDisposingHandler
 public:
@@ -96,28 +87,6 @@ public:
 public:
     void switch_to_context();
     const SrsContextId& context_id();
-private:
-    virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
-    srs_error_t try_to_write();
-// quic tls callback function
-public:
-    int on_rx_key(ngtcp2_crypto_level level, const uint8_t *secret, size_t secretlen);
-    int on_tx_key(ngtcp2_crypto_level level, const uint8_t *secret, size_t secretlen);
-    int on_application_tx_key();
-    int write_server_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen);
-    int acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen);
-    void set_tls_alert(uint8_t alert);
-// ngtcp2 callback function
-public:
-    int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
-    int recv_crypto_data(ngtcp2_crypto_level crypto_level, const uint8_t* data, size_t datalen);
-    int handshake_completed();
-		int on_stream_open(int64_t stream_id);
-		int on_stream_close(int64_t stream_id, uint64_t app_error_code);
-    int get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen);
-    int update_key(uint8_t *rx_secret, uint8_t *tx_secret, ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
-            ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv, const uint8_t *current_rx_secret,
-            const uint8_t *current_tx_secret, size_t secretlen);
 };
 
 #endif
