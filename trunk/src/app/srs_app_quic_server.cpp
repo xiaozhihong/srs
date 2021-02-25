@@ -39,6 +39,7 @@ using namespace std;
 #include <srs_app_server.hpp>
 #include <srs_service_utility.hpp>
 #include <srs_protocol_utility.hpp>
+#include <srs_app_rtc_forward.hpp>
 
 const size_t kSvScidLen = 18;
 
@@ -109,6 +110,10 @@ SrsQuicServer::~SrsQuicServer()
 srs_error_t SrsQuicServer::initialize()
 {
     srs_error_t err = srs_success;
+
+    if (!_srs_config->get_quic_server_enabled()) {
+        return err;
+    }
 
     if ((err = timer_->tick(5 * SRS_UTIME_SECONDS)) != srs_success) {
         return srs_error_wrap(err, "hourglass tick");
@@ -205,7 +210,7 @@ srs_error_t SrsQuicServer::on_udp_packet(SrsUdpMuxSocket* skt)
         }
     }
 
-    srs_info("scid=%s, dcid=%s", quic_conn_id_dump(scid, scid_len).c_str(),
+    srs_verbose("scid=%s, dcid=%s", quic_conn_id_dump(scid, scid_len).c_str(),
         quic_conn_id_dump(dcid, dcid_len).c_str());
 
     SrsQuicConnection* quic_conn = NULL;
@@ -234,6 +239,9 @@ srs_error_t SrsQuicServer::notify(int type, srs_utime_t interval, srs_utime_t ti
 
     // Check all quic_conn and dispose the dead quic_conn.
     for (int i = 0; i < (int)_srs_quic_manager->size(); i++) {
+        // TODO: FIXME: will crash.
+        continue;
+
         SrsQuicConnection* quic_conn = dynamic_cast<SrsQuicConnection*>(_srs_quic_manager->at(i));
         if (!quic_conn || !quic_conn->is_alive() || quic_conn->disposing_) {
             nn_quic_conns++;
@@ -244,15 +252,20 @@ srs_error_t SrsQuicServer::notify(int type, srs_utime_t interval, srs_utime_t ti
         quic_conn->switch_to_context();
 
         // Use manager to free quic_conn and notify other objects.
-        // TODO: FIXME:
-        // srs_trace("@john remove quic conn");
-        // _srs_quic_manager->remove(quic_conn);
+        _srs_quic_manager->remove(quic_conn);
     }
 
     // Ignore stats if no QUIC connections.
     if (!nn_quic_conns) {
         return err;
     }
+
+	// Show statistics for QUIC server.
+    SrsProcSelfStat* u = srs_get_self_proc_stat();
+    // Resident Set Size: number of pages the process has in real memory.
+    int memory = (int)(u->rss * 4 / 1024);
+    // TODO: FIXME: Show more data for QUIC server.
+    srs_trace("QUIC: Server conns=%u, cpu=%.2f%%, rss=%dMB", nn_quic_conns, u->percent * 100, memory);
 
     return err;
 }
@@ -295,14 +308,14 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
 
     int ret = ngtcp2_accept(&hd, data, size);
     if (ret == -1) {
-        return srs_error_new(ERROR_QUIC_CONN, "accept failed, ret=%d", ret);
+        return srs_error_new(ERROR_QUIC_CONN, "accept failed, ret=%d(%s)", ret, ngtcp2_strerror(ret));
     } else if (ret == 1) {
         return send_version_negotiation(skt, hd.version, hd.scid.data, hd.scid.datalen,
                                           hd.dcid.data, hd.dcid.datalen);
     }
 
     switch (hd.type) {
-        // TODO: FIXME:
+        // TODO: FIXME:process special quic connection type.
         case NGTCP2_PKT_INITIAL: {
         } break;
         case NGTCP2_PKT_0RTT: {
@@ -313,6 +326,8 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
 
     SrsContextId cid = _srs_context->get_id();
     SrsQuicConnection* quic_conn = new SrsQuicConnection(this, cid);
+    // TODO: FIXME: set handler by listen type.
+    quic_conn->set_conn_handler(_srs_rtc_forward);
     if ((err = quic_conn->accept(skt, &hd)) != srs_success) {
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
@@ -365,4 +380,4 @@ void SrsQuicServerAdapter::stop()
 {
 }
 
-SrsResourceManager* _srs_quic_manager = new SrsResourceManager("QUIC", true);
+SrsResourceManager* _srs_quic_manager = new SrsResourceManager("QUIC", true/*verbose*/);

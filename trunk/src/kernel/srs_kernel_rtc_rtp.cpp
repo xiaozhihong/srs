@@ -697,6 +697,11 @@ bool SrsRtpPacket2::is_audio()
     return frame_type == SrsFrameTypeAudio;
 }
 
+bool SrsRtpPacket2::is_video()
+{
+    return frame_type == SrsFrameTypeVideo;
+}
+
 SrsRtpPacket2* SrsRtpPacket2::copy()
 {
     SrsRtpPacket2* cp = new SrsRtpPacket2();

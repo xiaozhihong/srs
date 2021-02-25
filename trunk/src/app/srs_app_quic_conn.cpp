@@ -42,8 +42,6 @@ using namespace std;
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_util.hpp>
 
-#define SRS_TICKID_QUIC 1
-
 const int kServerCidLen = 18;
 const int kClientCidLen = 18;
 
@@ -57,6 +55,9 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid)
     cid_ = cid;
     server_ = s;
     timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
+
+    conn_handler_ = NULL;
+    stream_handler_ = NULL;
 }
 
 SrsQuicConnection::~SrsQuicConnection()
@@ -64,6 +65,10 @@ SrsQuicConnection::~SrsQuicConnection()
     _srs_quic_manager->unsubscribe(this);
 
     srs_freep(timer_);
+    srs_freep(conn_handler_);
+
+    // TODO: FIXME: stream handler need to free?
+    srs_freep(stream_handler_);
 }
 
 srs_error_t SrsQuicConnection::accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
@@ -98,18 +103,14 @@ srs_error_t SrsQuicConnection::on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* 
     return on_data(&path, data, size);
 }
 
-ngtcp2_path SrsQuicConnection::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
-        sockaddr* remote_addr, const socklen_t remote_addrlen)
+void SrsQuicConnection::set_conn_handler(ISrsQuicConnHandler* conn_handler)
 {
-    ngtcp2_path path;
-    path.local.addr = local_addr;
-    path.local.addrlen = local_addrlen;
-    path.local.user_data = NULL;
-    path.remote.addr = remote_addr;
-    path.remote.addrlen = remote_addrlen;
-    path.remote.user_data = NULL;
+    conn_handler_ = conn_handler;
+}
 
-    return path;
+void SrsQuicConnection::set_stream_handler(ISrsQuicStreamHandler* stream_handler)
+{
+    stream_handler_ = stream_handler;
 }
 
 ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid)
@@ -117,8 +118,9 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
 
-    // TODO: FIXME: conf this values.
-    settings.log_printf = quic_log_printf;
+    // TODO: FIXME: conf this values using struct like SrsQuicParam.
+    settings.log_printf = ngtcp2_log_handle;
+    settings.qlog.write = qlog_handle;
     settings.initial_ts = srs_get_system_time();
   	settings.token.base = token;
   	settings.token.len = tokenlen;
@@ -136,6 +138,7 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
   	params.max_idle_timeout = 30 * NGTCP2_SECONDS;
   	params.stateless_reset_token_present = 1;
   	params.active_connection_id_limit = 7;
+
     if (original_dcid) {
         params.original_dcid = *original_dcid;
     }
@@ -153,14 +156,28 @@ size_t SrsQuicConnection::get_static_secret_len()
     return server_->get_quic_token()->get_static_secret_len();
 }
 
-int SrsQuicConnection::check_conn_status()
+int SrsQuicConnection::recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset,
+        const uint8_t *data, size_t datalen)
 {
+	int ret = SrsQuicTransport::recv_stream_data(flags, stream_id, offset, data, datalen);
+    if (ret != 0) {
+        return ret;
+    }
+
+    if (stream_handler_) {
+        srs_error_t err = stream_handler_->on_stream_data(this, stream_id, data, datalen);
+        if (err != srs_success) {
+            srs_warn("stream handler failed, err=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+    }
     return 0;
 }
 
 int SrsQuicConnection::handshake_completed()
 {
-	srs_trace("quic handshake completed");
+	srs_trace("quic connection handshake completed");
+
     uint8_t token[kMaxTokenLen];
     size_t tokenlen = sizeof(token);
     if (server_->get_quic_token()->generate_token(token, tokenlen, 
@@ -172,6 +189,10 @@ int SrsQuicConnection::handshake_completed()
     if (ret != 0) {
         srs_error("ngtcp2_conn_submit_new_token failed, ret=%d", ret);
         return -1;
+    }
+
+    if (conn_handler_) {
+        conn_handler_->on_connection_established(this);
     }
 
     return 0;
@@ -191,7 +212,7 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
     int ret = ngtcp2_conn_server_new(&conn_, dcid, scid, &path, version, &cb_, &settings_, NULL, this);
 
     if (ret != 0) {
-        return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed,ret=%d", ret);
+        return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed, err=%s", ngtcp2_strerror(ret));
     }
 
     tls_session_ = new SrsQuicTlsServerSession();
@@ -200,25 +221,6 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
     }
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
-
-    // TODO: FIXME: need schecule
-    if ((err = timer_->tick(SRS_TICKID_QUIC, 10 * SRS_UTIME_MILLISECONDS)) != srs_success) {
-        return srs_error_wrap(err, "quic tick");
-    }
-
-    if ((err = timer_->start()) != srs_success) {
-        return srs_error_wrap(err, "timer start failed");
-    }
-
-    // TODO: FIXME: test code, remove it later.
-    if (true) {
-        static int n = 0;
-        if (n == 0) {
-            SrsQuicClient* client = new SrsQuicClient();
-            client->connect("127.0.0.1", 9999);
-            ++n;
-        }
-    }
 
     return err;
 }

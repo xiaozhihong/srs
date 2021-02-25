@@ -284,6 +284,8 @@ public:
     void set_decode_handler(ISrsRtpPacketDecodeHandler* h);
     // Whether the packet is Audio packet.
     bool is_audio();
+    // Whether the packet is Video packet.
+    bool is_video();
     // Copy the RTP packet.
     virtual SrsRtpPacket2* copy();
     // Set RTP header extensions for encoding or decoding header extension

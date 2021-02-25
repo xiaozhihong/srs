@@ -54,6 +54,7 @@ enum SrsRtcpType
 const uint8_t kPLI  = 1;
 const uint8_t kSLI  = 2;
 const uint8_t kRPSI = 3;
+const uint8_t kFIR  = 4;
 const uint8_t kAFB  = 15;
 
 // RTCP Header, @see http://tools.ietf.org/html/rfc3550#section-6.1
@@ -371,6 +372,21 @@ public:
     virtual srs_error_t decode(SrsBuffer *buffer);
     virtual uint64_t nb_bytes();
     virtual srs_error_t encode(SrsBuffer *buffer);   
+};
+
+class SrsRtcpFir : public SrsRtcpPsfbCommon
+{
+private:
+    uint8_t seq_;
+public:
+    SrsRtcpFir(uint32_t sender_ssrc = 0, uint8_t seq = 0);
+    virtual ~SrsRtcpFir();
+
+// interface ISrsCodec
+public:
+    virtual srs_error_t decode(SrsBuffer *buffer);
+    virtual uint64_t nb_bytes();
+    virtual srs_error_t encode(SrsBuffer *buffer);  
 };
 
 class SrsRtcpPli : public SrsRtcpPsfbCommon

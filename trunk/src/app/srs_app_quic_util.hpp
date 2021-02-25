@@ -36,18 +36,23 @@
 #include <ngtcp2/ngtcp2_crypto.h>
 
 
-// TODO: FIXME: add annotation
-
-extern void quic_log_printf(void *user_data, const char *fmt, ...);
+// Lib ngtcp2  log handle.
+extern void ngtcp2_log_handle(void *user_data, const char *fmt, ...);
+// qlog handler
+extern void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen);
+// Generate |destlen| size random data and write to |dest|.
 extern int srs_generate_rand_data(uint8_t* dest, size_t destlen);
 
 const size_t kTokenRandDatalen = 16;
 const uint8_t kTokenMagic = 0x36;
 const size_t kMaxTokenLen = 1 + sizeof(uint64_t) + 16 + kTokenRandDatalen;
 
+// Helper function to generate ngtcp2_crypto_aead.
 extern ngtcp2_crypto_aead crypto_aead_aes_128_gcm();
+// Helper function to generate ngtcp2_crypto_md.
 extern ngtcp2_crypto_md crypto_md_sha256();
 
+// Helper class to generate quic token.
 class SrsQuicToken
 {
 public:

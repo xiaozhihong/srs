@@ -367,6 +367,7 @@
 #define ERROR_RTC_DUPLICATED_SSRC           5029
 #define ERROR_RTC_NO_TRACK                  5030
 #define ERROR_RTC_RTCP_EMPTY_RR             5031
+#define ERROR_RTC_FORWARD                   5032
 
 ///////////////////////////////////////////////////////
 // GB28181 API error.
@@ -404,6 +405,7 @@
 #define ERROR_QUIC_SERVER                   7005
 #define ERROR_QUIC_TOKEN                    7006
 #define ERROR_QUIC_CLIENT                   7007
+#define ERROR_QUIC_STREAM                   7008
 
 ///////////////////////////////////////////////////////
 // HTTP API error.

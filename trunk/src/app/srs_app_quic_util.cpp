@@ -41,18 +41,18 @@ using namespace std;
 ngtcp2_crypto_aead crypto_aead_aes_128_gcm()
 {
   	ngtcp2_crypto_aead aead;
-  	ngtcp2_crypto_aead_init(&aead, const_cast<EVP_CIPHER *>(EVP_aes_128_gcm()));
+  	ngtcp2_crypto_aead_init(&aead, const_cast<EVP_CIPHER*>(EVP_aes_128_gcm()));
   	return aead;
 }
 
 ngtcp2_crypto_md crypto_md_sha256()
 {
   	ngtcp2_crypto_md md;
-  	ngtcp2_crypto_md_init(&md, const_cast<EVP_MD *>(EVP_sha256()));
+  	ngtcp2_crypto_md_init(&md, const_cast<EVP_MD*>(EVP_sha256()));
   	return md;
 }
 
-void quic_log_printf(void *user_data, const char *fmt, ...) 
+void ngtcp2_log_handle(void *user_data, const char *fmt, ...) 
 {
     va_list ap;
 
@@ -61,14 +61,21 @@ void quic_log_printf(void *user_data, const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
 
-    srs_trace("ngtcp2 quic log # %s", buf);
+    // TODO: FIXME: config if we log ngtcp2 quic log
+    srs_verbose("ngtcp2 quic log # %s", buf);
+}
+
+void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen)
+{
+    // TODO: FIXME: config if we log qlog
+    srs_verbose("QLOG # %s", string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
 int srs_generate_rand_data(uint8_t* dest, size_t destlen)
 {
-		for (size_t i = 0 ; i < destlen; ++i) {
+	for (size_t i = 0 ; i < destlen; ++i) {
         dest[i] = random() % 255;
-	  }
+	}
     return 0;
 }
 
@@ -100,32 +107,30 @@ size_t SrsQuicToken::generate_token_addr(uint8_t *dest, size_t destlen, const so
   	size_t addrlen = 0;
 
   	switch (sa->sa_family) {
-  			case AF_INET:
-  			  	addr = reinterpret_cast<const uint8_t *>(
-  			  	    &reinterpret_cast<const sockaddr_in *>(sa)->sin_addr);
-  			  	addrlen = sizeof(reinterpret_cast<const sockaddr_in *>(sa)->sin_addr);
-  			  	break;
-  			case AF_INET6:
-  			  	addr = reinterpret_cast<const uint8_t *>(
-  			  	    &reinterpret_cast<const sockaddr_in6 *>(sa)->sin6_addr);
-  			  	addrlen = sizeof(reinterpret_cast<const sockaddr_in6 *>(sa)->sin6_addr);
-  			  	break;
-  			default:
-  			  	return -1;
+        case AF_INET:
+          	addr = reinterpret_cast<const uint8_t*>(&reinterpret_cast<const sockaddr_in*>(sa)->sin_addr);
+          	addrlen = sizeof(reinterpret_cast<const sockaddr_in*>(sa)->sin_addr);
+          	break;
+        case AF_INET6:
+          	addr = reinterpret_cast<const uint8_t*>(&reinterpret_cast<const sockaddr_in6*>(sa)->sin6_addr);
+          	addrlen = sizeof(reinterpret_cast<const sockaddr_in6*>(sa)->sin6_addr);
+          	break;
+        default:
+	  	return -1;
   	}
 
     if (addr == NULL || addrlen > destlen) {
         return -1;
     }
 
-		memcpy(dest, addr, addrlen);
+	memcpy(dest, addr, addrlen);
     return addrlen;
 }
 
 int SrsQuicToken::generate_secret(uint8_t *secret, size_t secretlen) 
 {
-		uint8_t rand[16];
-		uint8_t md[32];
+    uint8_t rand[16];
+    uint8_t md[32];
 
     srs_assert(sizeof(md) == secretlen);
 

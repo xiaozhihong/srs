@@ -48,31 +48,44 @@ class SrsQuicToken;
 
 class SrsQuicClient : public SrsQuicTransport, virtual public ISrsCoroutineHandler
 {
-private:
-    SrsSTCoroutine* trd_;
-    SrsQuicTlsContext* tls_context_;
-    SrsQuicToken* quic_token_;
 public:
     SrsQuicClient();
   	~SrsQuicClient();
 private:
     srs_error_t create_udp_socket();
     srs_error_t create_udp_io_thread();
+// Interface for SrsQuicTransport
 private:
-    ngtcp2_callbacks build_quic_callback();
     virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
     virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
         sockaddr* remote_addr, const socklen_t remote_addrlen,
         ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
         uint8_t* token, const size_t tokenlen);
-private:
+
 	virtual uint8_t* get_static_secret();
     virtual size_t get_static_secret_len();
-    virtual int check_conn_status();
+
+	virtual int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
+	virtual int handshake_completed();
+    virtual int on_stream_open(int64_t stream_id);
+    virtual int on_stream_close(int64_t stream_id, uint64_t app_error_code);
+
+// SrsQuicClient API
 public:
     srs_error_t connect(const std::string& ip, uint16_t port);
+    virtual srs_error_t open_stream(int64_t* stream_id);
+    virtual srs_error_t read_stream_data(const int64_t stream_id, uint8_t* buf, const size_t buf_size, int* nb_read);	
 private:
+    // Quic client udp packet io recv thread.
     virtual srs_error_t cycle();
+
+private:
+    SrsSTCoroutine* trd_;
+    SrsQuicTlsContext* tls_context_;
+    SrsQuicToken* quic_token_;
+    srs_cond_t connection_cond_;
+    std::map<int64_t, srs_cond_t> stream_id_cond_;
+	std::map<int64_t, std::deque<std::string> > stream_data_recv_queue_;
 };
 
 #endif

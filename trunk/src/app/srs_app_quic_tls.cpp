@@ -56,6 +56,8 @@ const string kHqAlpnDraft31 = "\x5hq-31";
 const string kHqAlpnDraft32 = "\x5hq-32";
 const string kHqAlph = kHqAlpnDraft29 + kHqAlpnDraft30 + kHqAlpnDraft31 + kHqAlpnDraft32;
 
+// TODO: FIXME: quic have other draft
+
 const uint32_t QUIC_VER_DRAFT29 = 0xFF00001DU;
 const uint32_t QUIC_VER_DRAFT30 = 0xFF00001EU;
 const uint32_t QUIC_VER_DRAFT31 = 0xFF00001FU;
@@ -65,7 +67,7 @@ namespace srs_ssl_quic_common {
 
 static int flush_flight(SSL *ssl) 
 { 
-		return 1; 
+    return 1; 
 }
 
 static int send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert) 
@@ -116,7 +118,7 @@ static int alpn_select_proto_hq_cb(SSL *ssl, const uint8_t **out,
         if (memcmp(alpn, p, alpnlen) == 0) {
       	  	*out = p + 1;
       	  	*outlen = *p;
-            srs_info("choose alpn %s", 
+            srs_info("quic choose alpn %s", 
                 string(reinterpret_cast<const char*>(*out), (size_t)(*outlen)).c_str());
       	  	return SSL_TLSEXT_ERR_OK;
       	}
@@ -382,6 +384,7 @@ srs_error_t SrsQuicTlsClientSession::init(const SrsQuicTlsContext* quic_tls_ctx,
 
     SSL_set_alpn_protos(ssl_, reinterpret_cast<const uint8_t*>(kHqAlph.data()), kHqAlph.size());
 
+    // TODO: FIXME: have better name? or config host name.
     SSL_set_tlsext_host_name(ssl_, "127.0.0.1");
 
     SSL_set_msg_callback(ssl_, SSL_trace);

@@ -45,8 +45,6 @@ using namespace std;
 #include <sys/socket.h>
 #include <netdb.h>
 
-#define SRS_TICKID_QUIC 1
-
 const int kClientCidLen = 18;
 
 SrsQuicClient::SrsQuicClient()
@@ -56,6 +54,7 @@ SrsQuicClient::SrsQuicClient()
 
     tls_context_ = NULL;
 	quic_token_ = NULL;
+    connection_cond_ = NULL;
 }
 
 SrsQuicClient::~SrsQuicClient()
@@ -65,6 +64,17 @@ SrsQuicClient::~SrsQuicClient()
 
     srs_freep(tls_context_);
     srs_freep(quic_token_);
+
+    if (connection_cond_) {
+        srs_cond_destroy(connection_cond_);
+    }
+
+    for (std::map<int64_t, srs_cond_t>::iterator iter = stream_id_cond_.begin(); 
+            iter != stream_id_cond_.end(); ++iter) {
+        if (iter->second) {
+            srs_cond_destroy(iter->second);
+        }
+    }
 }
 
 ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid)
@@ -72,8 +82,9 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
 
-    // TODO: FIXME: conf this values.
-    settings.log_printf = quic_log_printf;
+    // TODO: FIXME: conf this values using SrsQuicParam struct.
+    settings.log_printf = ngtcp2_log_handle;
+    settings.qlog.write = qlog_handle;
 	settings.initial_ts = srs_get_system_time();
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
@@ -102,15 +113,11 @@ size_t SrsQuicClient::get_static_secret_len()
     return quic_token_->get_static_secret_len();
 }
 
-int SrsQuicClient::check_conn_status()
-{
-    return 0;
-}
-
 srs_error_t SrsQuicClient::create_udp_socket()
 {
     srs_error_t err = srs_success;
 
+    // TODO: FIXME: too complex.
     addrinfo hints;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family   = AF_UNSPEC;
@@ -141,9 +148,6 @@ srs_error_t SrsQuicClient::create_udp_socket()
         return srs_error_new(ERROR_SOCKET_CREATE, "get udp socket name failed");
     }
 
-    srs_trace("local addrlen=%u, sa_family=%d, sin_port=%u", local_addr_len_, reinterpret_cast<sockaddr*>(&local_addr_)->sa_family,
-        local_addr_.sin_port);
-
     udp_fd_ = srs_netfd_open_socket(fd);
 
 	return err;
@@ -156,7 +160,7 @@ srs_error_t SrsQuicClient::create_udp_io_thread()
     trd_ = new SrsSTCoroutine("quic-client-io", this);
 
     if ((err = trd_->start()) != srs_success) {
-        return srs_error_wrap(err, "coroutine");
+        return srs_error_wrap(err, "start quic client io thread failed");
     }
 
     return err;
@@ -170,6 +174,7 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
     srs_error_t err = srs_success;
 
     tls_context_ = new SrsQuicTlsClientContext();
+    // Client tls init no need private key and pem file.
     if ((err = tls_context_->init("", "")) != srs_success) {
         return srs_error_wrap(err, "init quic tls client ctx failed");
     }
@@ -188,7 +193,7 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
         version, &cb_, &settings_, NULL, this);
 
     if (ret != 0) {
-        return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed,ret=%d", ret);
+        return srs_error_new(ERROR_QUIC_CONN, "init quic client failed, err=%s", ngtcp2_strerror(ret));
     }
 
     tls_session_ = new SrsQuicTlsClientSession();
@@ -197,11 +202,6 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
     }
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
-
-    // TODO: FIXME: need schecule
-    if ((err = timer_->tick(SRS_TICKID_QUIC, 10 * SRS_UTIME_MILLISECONDS)) != srs_success) {
-        return srs_error_wrap(err, "quic tick");
-    }
 
     if ((err = timer_->start()) != srs_success) {
         return srs_error_wrap(err, "timer start failed");
@@ -240,7 +240,104 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port)
         return srs_error_wrap(err, "connect to %s:%u failed", ip.c_str(), port);
     }
 
-    srs_trace("connect to %s:%u success", ip.c_str(), port);
+    if ((err = io_write_streams()) != srs_success) {
+        return srs_error_wrap(err, "send quic client init packet failed");
+    }
+
+    // TODO: FIXME: timeout as a param of connect functin.
+    connection_cond_ = srs_cond_new();
+    if (srs_cond_timedwait(connection_cond_, 1000 * SRS_UTIME_MILLISECONDS) != 0) {
+        return srs_error_new(ERROR_QUIC_CLIENT, "connect to %s:%u timeout", ip.c_str(), port);
+    }
+
+    srs_trace("quic client connect to %s:%u success", ip.c_str(), port);
+    return err;
+}
+
+int SrsQuicClient::recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset,
+        const uint8_t *data, size_t datalen)
+{
+    int ret = SrsQuicTransport::recv_stream_data(flags, stream_id, offset, data, datalen);
+    if (ret != 0) {
+        return ret;
+    }
+
+    deque<string>& queue = stream_data_recv_queue_[stream_id];
+    // TODO: FIXME: check queue is out of recv buffer size.
+    queue.push_back(string(reinterpret_cast<const char*>(data), datalen));
+    // TODO: FIXME: check cond is valid.
+    srs_cond_t cond = stream_id_cond_[stream_id];
+
+    // notify data arrive, stream readable.
+    srs_cond_signal(cond);
+
+    return 0;
+}
+
+int SrsQuicClient::handshake_completed()
+{
+    srs_trace("quic client handshake completed");
+    srs_cond_signal(connection_cond_);
+    return 0;
+}
+
+int SrsQuicClient::on_stream_open(int64_t stream_id)
+{
+    srs_trace("stream id %ld opened", stream_id);
+    srs_cond_t& cond = stream_id_cond_[stream_id];
+    srs_cond_signal(cond);
+
+    return 0;
+}
+
+int SrsQuicClient::on_stream_close(int64_t stream_id, uint64_t app_error_code)
+{
+    // TODO: FIXME: impl it.
+    return 0;
+}
+
+srs_error_t SrsQuicClient::read_stream_data(const int64_t stream_id, uint8_t* buf, const size_t buf_size, int* nb_read)
+{
+    srs_error_t err = srs_success;
+
+    deque<string>& queue = stream_data_recv_queue_[stream_id];
+    srs_cond_t cond = stream_id_cond_[stream_id];
+
+    if (! queue.empty()) {
+        string& stream_data = queue.front();
+        memcpy(buf, reinterpret_cast<const uint8_t*>(stream_data.data()), stream_data.size());
+        *nb_read = stream_data.size();
+        queue.pop_front();
+        return err;
+    }
+
+    // TODO: FIXME: timeout as a param of connect functin.
+    // Waiting to recv stream data, when readable, quic transport will signal the stream condition.
+    if (srs_cond_timedwait(cond, 1000 * SRS_UTIME_MILLISECONDS) != 0) {
+        return srs_error_new(ERROR_QUIC_CLIENT, "recv timeout or error");
+    }
+
+    string& stream_data = queue.front();
+    memcpy(buf, stream_data.data(), stream_data.size());
+    *nb_read = stream_data.size();
+    queue.pop_front();
+    return err;
+}
+
+srs_error_t SrsQuicClient::open_stream(int64_t* stream_id)
+{
+    srs_error_t err = srs_success;
+
+    if ((err = SrsQuicTransport::open_stream(stream_id)) != srs_success) {
+        return srs_error_wrap(err, "open stream failed");
+    }
+
+    // TODO: FIXME: check stream is opened?
+    srs_cond_t cond = srs_cond_new();
+    stream_id_cond_[*stream_id] = cond;
+
+    srs_trace("open stream id %ld success", *stream_id);
+
     return err;
 }
 
@@ -257,13 +354,17 @@ srs_error_t SrsQuicClient::cycle()
         int nb_buf = sizeof(buf);
 
         int nread = srs_recvfrom(udp_fd_, buf, nb_buf, (sockaddr*)&remote_addr_, (int*)&remote_addr_len_, SRS_UTIME_NO_TIMEOUT);
-        srs_trace("quic client recv %d bytes", nread);
         if (nread  <= 0) {
-            return srs_error_new(ERROR_SOCKET_READ, "udp read, nread=%d", nread);
+            srs_warn("quic client udp recv failed, ret=%d", nread);
+            continue;
         }
+
         ngtcp2_path path = build_quic_path(reinterpret_cast<sockaddr*>(&local_addr_), local_addr_len_,
             reinterpret_cast<sockaddr*>(&remote_addr_), remote_addr_len_);
-        on_data(&path, buf, nread);
+
+        if ((err = on_data(&path, buf, nread)) != srs_success) {
+            return srs_error_wrap(err, "quic client process packet failed");
+        }
 	}
 
     return err;

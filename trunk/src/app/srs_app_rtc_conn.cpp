@@ -57,6 +57,7 @@ using namespace std;
 #include <srs_app_rtc_server.hpp>
 #include <srs_app_rtc_source.hpp>
 #include <srs_protocol_utility.hpp>
+#include <srs_app_rtc_forward.hpp>
 
 #define SRS_TICKID_RTCP 0
 #define SRS_TICKID_TWCC 2
@@ -658,13 +659,16 @@ srs_error_t SrsRtcPlayStream::send_packets(SrsRtcStream* source, const vector<Sr
             }
 
             // TODO: FIXME: Padding audio to the max payload in RTP packets.
-        } else {
+        } else if (pkt->is_video()) {
             // TODO: FIXME: Any simple solution?
             SrsRtcVideoSendTrack* video_track = video_tracks_[pkt->header.get_ssrc()];
 
             if ((err = video_track->on_rtp(pkt, info)) != srs_success) {
                 return srs_error_wrap(err, "video track, SSRC=%u, SEQ=%u", pkt->header.get_ssrc(), pkt->header.get_sequence());
             }
+        } else {
+            srs_warn("unknown rtp packet");
+            continue;
         }
 
         // Detail log, should disable it in release version.
@@ -1425,6 +1429,14 @@ srs_error_t SrsRtcPublishStream::do_request_keyframe(uint32_t ssrc, SrsContextId
         srs_warn("PLI err %s", srs_error_desc(err).c_str());
         srs_freep(err);
     }
+
+    // TODO: FIXME: add new function to send fir.
+    static int fir_seq = 0;
+    if ((err = session_->send_rtcp_fb_fir(ssrc, fir_seq++)) != srs_success) {
+        srs_warn("FIR err %s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
 
     session_->stat_->nn_pli++;
 
@@ -2426,6 +2438,29 @@ srs_error_t SrsRtcConnection::send_rtcp_fb_pli(uint32_t ssrc, const SrsContextId
     return sendonly_skt->sendto(protected_buf, nb_protected_buf, 0);
 }
 
+srs_error_t SrsRtcConnection::send_rtcp_fb_fir(uint32_t ssrc, uint32_t fir_seq)
+{
+    srs_error_t err = srs_success;
+
+    SrsRtcpFir fir(0, fir_seq);
+    fir.set_media_ssrc(ssrc);
+
+    char buf[kRtpPacketSize];
+    SrsBuffer stream(buf, sizeof(buf));
+
+    if ((err = fir.encode(&stream)) != srs_success) {
+        return srs_error_wrap(err, "encode fir rtcp feedback packet failed");
+    }
+
+    char protected_buf[kRtpPacketSize];
+    int nb_protected_buf = stream.pos();
+    if ((err = transport_->protect_rtcp(stream.data(), protected_buf, nb_protected_buf)) != srs_success) {
+        return srs_error_wrap(err, "protect rtcp psfb fir");
+    }
+
+    return sendonly_skt->sendto(protected_buf, nb_protected_buf, 0);
+}
+
 void SrsRtcConnection::simulate_nack_drop(int nn)
 {
     for(map<string, SrsRtcPublishStream*>::iterator it = publishers_.begin(); it != publishers_.end(); ++it) {
@@ -3358,6 +3393,7 @@ srs_error_t SrsRtcConnection::create_player(SrsRequest* req, std::map<uint32_t, 
             return srs_error_new(ERROR_RTC_DUPLICATED_SSRC, "duplicate ssrc %d, track id: %s",
                 track_desc->ssrc_, track_desc->id_.c_str());
         }
+        srs_trace("play track ssrc %d", track_desc->ssrc_);
         players_ssrc_map_[track_desc->ssrc_] = player;
 
         if(0 != track_desc->fec_ssrc_) {
@@ -3498,5 +3534,5 @@ ISrsRtcHijacker::~ISrsRtcHijacker()
 {
 }
 
-ISrsRtcHijacker* _srs_rtc_hijacker = NULL;
+ISrsRtcHijacker* _srs_rtc_hijacker = new SrsRtcForward();
 

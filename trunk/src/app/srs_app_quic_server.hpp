@@ -40,10 +40,17 @@ class SrsResourceManager;
 class SrsQuicTlsServerContext;
 class SrsQuicToken;
 
+enum SrsQuicListenerType
+{
+	// RTC server forward.
+    SrsQuicListenerRtcForward = 0,
+};
+
 // The QUIC server instance, listen UDP port, handle UDP packet, manage QUIC connections.
 class SrsQuicServer : virtual public ISrsUdpMuxHandler, virtual public ISrsHourGlass
 {
 private:
+    SrsQuicListenerType listen_type_;
     SrsHourGlass* timer_;
     struct sockaddr_in listen_sa_;
     std::vector<SrsUdpMuxListener*> listeners_;

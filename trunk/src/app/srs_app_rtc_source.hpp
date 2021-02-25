@@ -219,6 +219,7 @@ public:
     // Set and get stream description for souce
     bool has_stream_desc();
     void set_stream_desc(SrsRtcStreamDescription* stream_desc);
+    SrsRtcStreamDescription* get_stream_desc();
     std::vector<SrsRtcTrackDescription*> get_track_desc(std::string type, std::string media_type);
 };
 
@@ -304,6 +305,10 @@ public:
 public:
     virtual SrsCodecPayload* copy();
     virtual SrsMediaPayloadType generate_media_payload_type();
+public:
+    virtual std::string type_str();
+    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 // TODO: FIXME: Rename it.
@@ -317,7 +322,6 @@ public:
         std::string level_asymmerty_allow;
     };
     H264SpecificParameter h264_param_;
-
 public:
     SrsVideoPayload();
     SrsVideoPayload(uint8_t pt, std::string encode_name, int sample);
@@ -327,6 +331,10 @@ public:
     virtual SrsMediaPayloadType generate_media_payload_type();
 public:
     srs_error_t set_h264_param_desc(std::string fmtp);
+public:
+    virtual std::string type_str();
+    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 // TODO: FIXME: Rename it.
@@ -357,6 +365,10 @@ public:
     virtual SrsMediaPayloadType generate_media_payload_type();
 public:
     srs_error_t set_opus_param_desc(std::string fmtp);
+public:
+    virtual std::string type_str();
+    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 // TODO: FIXME: Rename it.
@@ -371,6 +383,10 @@ public:
 public:
     virtual SrsRedPayload* copy();
     virtual SrsMediaPayloadType generate_media_payload_type();
+public:
+    virtual std::string type_str();
+    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 class SrsRtxPayloadDes : public SrsCodecPayload
@@ -385,6 +401,10 @@ public:
 public:
     virtual SrsRtxPayloadDes* copy();
     virtual SrsMediaPayloadType generate_media_payload_type();
+public:
+    virtual std::string type_str();
+    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 class SrsRtcTrackDescription
@@ -439,6 +459,9 @@ public:
     int get_rtp_extension_id(std::string uri);
 public:
     SrsRtcTrackDescription* copy();
+public:
+    srs_error_t to_json(std::string& json);
+    srs_error_t from_json(SrsJsonObject* obj);
 };
 
 class SrsRtcStreamDescription
@@ -456,6 +479,10 @@ public:
 public:
     SrsRtcStreamDescription* copy();
     SrsRtcTrackDescription* find_track_description_by_ssrc(uint32_t ssrc);
+
+public:
+    srs_error_t to_json(std::string& json);
+    srs_error_t from_json(SrsJsonObject* obj);
 };
 
 class SrsRtcTrackStatistic

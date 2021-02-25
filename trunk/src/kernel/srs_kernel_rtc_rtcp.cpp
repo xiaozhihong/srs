@@ -1413,6 +1413,115 @@ srs_error_t SrsRtcpPsfbCommon::encode(SrsBuffer *buffer)
     return srs_error_new(ERROR_RTC_RTCP, "not support");
 }
 
+SrsRtcpFir::SrsRtcpFir(uint32_t sender_ssrc/*= 0*/, uint8_t seq/*=0 */)
+{
+    header_.padding = 0;
+    header_.type = SrsRtcpType_psfb;
+    header_.rc = kFIR;
+    header_.version = kRtcpVersion;
+    ssrc_ = sender_ssrc;
+    seq_ = seq;
+}
+
+SrsRtcpFir::~SrsRtcpFir()
+{
+}
+
+srs_error_t SrsRtcpFir::decode(SrsBuffer *buffer)
+{
+    /*
+    @doc: https://tools.ietf.org/html/rfc4585#section-6.1
+        0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |V=2|P|   FMT   |       PT      |          length               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                  SSRC of packet sender                        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                  SSRC of media source                         |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   :            Feedback Control Information (FCI)                 :
+   :                                                               :
+
+   @doc: https://tools.ietf.org/html/rfc5104#section-4.3.1
+   FCI:
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                              SSRC                             |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | Seq nr.       |    Reserved = 0                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   */
+
+    srs_error_t err = srs_success;
+    data_ = buffer->head();
+    nb_data_ = buffer->left();
+
+    if(srs_success != (err = decode_header(buffer))) {
+        return srs_error_wrap(err, "decode header");
+    }
+
+    // TODO: FIXME: rename media_ssrc_?
+    media_ssrc_ = buffer->read_4bytes();
+    media_ssrc_ = buffer->read_4bytes();
+    seq_ = buffer->read_1bytes();
+    uint32_t reserved = buffer->read_3bytes();
+
+    return err;
+}
+
+uint64_t SrsRtcpFir::nb_bytes()
+{
+    return 20;
+}
+
+srs_error_t SrsRtcpFir::encode(SrsBuffer *buffer)
+{
+    /*
+    @doc: https://tools.ietf.org/html/rfc4585#section-6.1
+        0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |V=2|P|   FMT   |       PT      |          length               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                  SSRC of packet sender                        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                  SSRC of media source                         |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   :            Feedback Control Information (FCI)                 :
+   :                                                               :
+
+   @doc: https://tools.ietf.org/html/rfc5104#section-4.3.1
+   FCI:
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                              SSRC                             |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   | Seq nr.       |    Reserved = 0                               |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   */
+
+    srs_error_t err = srs_success;
+    if(!buffer->require(nb_bytes())) {
+        return srs_error_new(ERROR_RTC_RTCP, "requires %d bytes", nb_bytes());
+    }
+
+    header_.length = 4;
+    if(srs_success != (err = encode_header(buffer))) {
+        return srs_error_wrap(err, "encode header");
+    }
+
+    buffer->write_4bytes(media_ssrc_);
+    buffer->write_4bytes(media_ssrc_);
+    buffer->write_1bytes(seq_);
+    buffer->write_3bytes(0);
+    
+    return err;
+}
+
+
 SrsRtcpPli::SrsRtcpPli(uint32_t sender_ssrc/*= 0*/)
 {
     header_.padding = 0;
