@@ -102,22 +102,24 @@ srs_error_t SrsRtcForward::on_before_play(SrsRtcConnection* session, SrsRequest*
 {
     srs_error_t err = srs_success;
 
-    srs_trace("rtc forward before play");
+	SrsRtcStream* rtc_source = NULL;
+    if ((err = _srs_rtc_sources->fetch_or_create(req, &rtc_source)) != srs_success) {
+        return srs_error_wrap(err, "create rtc_source");
+    }
 
-    string key = req->get_stream_url();
-    map<string, SrsRtcForwardReceiver*>::iterator iter = forward_stream_.find(key);
-    if (iter != forward_stream_.end()) {
-        srs_trace("stream %s already started forward", key.c_str());
+    if (!rtc_source->can_publish()) {
         return err;
     }
 
-    SrsRtcForwardReceiver* rtc_forward_receiver = new SrsRtcForwardReceiver(req);
-
-    if ((err = rtc_forward_receiver->start()) != srs_success) {
-        return srs_error_wrap(err, "rtc forward receiver start failed");
+    if (rtc_source->publish_stream() != NULL) {
+        return err;
     }
 
-    forward_stream_[key] = rtc_forward_receiver;
+    SrsRtcForwardPublisher* rtc_forward_publisher = new SrsRtcForwardPublisher(req);
+    if ((err = rtc_forward_publisher->start()) != srs_success) {
+        return srs_error_wrap(err, "rtc forward publisher start failed");
+    }
+    rtc_source->set_publish_stream(rtc_forward_publisher);
 
     return err;
 }
@@ -134,7 +136,6 @@ void SrsRtcForward::on_stop_play(SrsRtcConnection* session, SrsRtcPlayStream* pl
 
 srs_error_t SrsRtcForward::on_start_consume(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req, SrsRtcConsumer* consumer)
 {
-    srs_trace("on start consume");
     srs_error_t err = srs_success;
 
 	SrsRtcStream* rtc_source = NULL;
@@ -147,64 +148,48 @@ srs_error_t SrsRtcForward::on_start_consume(SrsRtcConnection* session, SrsRtcPla
         return err;
     }
 
-    uint32_t media_ssrc = 0;
-	for (int i = 0; i < (int)stream_desc->video_track_descs_.size(); ++i) {
-        SrsRtcTrackDescription* desc = stream_desc->video_track_descs_.at(i);
-        media_ssrc = desc->ssrc_;
-        break;
-    }
-
     ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
     if (publish_stream != NULL) {
-        publish_stream->request_keyframe(media_ssrc);
+	    for (int i = 0; i < (int)stream_desc->video_track_descs_.size(); ++i) {
+            SrsRtcTrackDescription* desc = stream_desc->video_track_descs_.at(i);
+            if (desc != NULL) {
+                publish_stream->request_keyframe(desc->ssrc_);
+            }
+        }
     }
 
     return err;
 }
 
-srs_error_t SrsRtcForward::on_new_connection(SrsQuicConnection* conn)
-{
-    return srs_success;
-}
-
-srs_error_t SrsRtcForward::on_connection_established(SrsQuicConnection* conn)
+srs_error_t SrsRtcForward::on_new_stream(SrsQuicStream* stream)
 {
     srs_error_t err = srs_success;
 
-    srs_trace("rtc forward quic conn established");
-
-    // TODO: FIXME: manager rtc forward sender
-    SrsRtcForwardSender* rtc_forward_sender = new SrsRtcForwardSender();
-    conn->set_stream_handler(rtc_forward_sender);
+    SrsRtcForwardConsumer* rtc_forward_consumer = new SrsRtcForwardConsumer(stream);
+    if ((err = rtc_forward_consumer->start()) != srs_success) {
+        return srs_error_wrap(err, "rtc forward consumer start failed");
+    }
 
     return err;
 }
 
-srs_error_t SrsRtcForward::on_close(SrsQuicConnection* conn)
-{
-    srs_error_t err = srs_success;
-
-    return err;
-}
-
-SrsRtcForwardReceiver::SrsRtcForwardReceiver(SrsRequest* req)
+SrsRtcForwardPublisher::SrsRtcForwardPublisher(SrsRequest* req)
 {
     req_ = new SrsRequest();
     *req_ = *req;
     trd_ = NULL;
-    quic_client_ = NULL;
     cond_waiting_sdp_ = srs_cond_new();
+    request_keyframe_ = false;
 }
 
-SrsRtcForwardReceiver::~SrsRtcForwardReceiver()
+SrsRtcForwardPublisher::~SrsRtcForwardPublisher()
 {
     srs_freep(req_);
     srs_freep(trd_);
-    srs_freep(quic_client_);
     srs_cond_destroy(cond_waiting_sdp_);
 }
 
-srs_error_t SrsRtcForwardReceiver::start()
+srs_error_t SrsRtcForwardPublisher::start()
 {
     srs_error_t err = srs_success;
 
@@ -214,14 +199,14 @@ srs_error_t SrsRtcForwardReceiver::start()
     }
 
     srs_trace("waiting recv rtc sdp");
-    if (srs_cond_timedwait(cond_waiting_sdp_, 1000*1000) != 0) {
+    if (srs_cond_timedwait(cond_waiting_sdp_, 5 * SRS_UTIME_SECONDS) != 0) {
         srs_warn("wait rtc forward recv sdp timeout");
     }
 
     return err;
 }
 
-srs_error_t SrsRtcForwardReceiver::cycle()
+srs_error_t SrsRtcForwardPublisher::cycle()
 {
     srs_error_t err = srs_success;
 
@@ -241,70 +226,51 @@ srs_error_t SrsRtcForwardReceiver::cycle()
             return srs_error_wrap(err, "quic client io thread");
         }
 
-        srs_freep(quic_client_);
-        quic_client_ = new SrsQuicClient();
+        SrsQuicClient* quic_client = new SrsQuicClient();
+        //SrsAutoFree(SrsQuicClient, quic_client);
 
         // TODO: FIXME:from conf.
         //string ip = "120.76.59.106";
         string ip = "127.0.0.1";
         uint16_t port = 12000;
-        if ((err = quic_client_->connect(ip, port)) != srs_success) {
+        if ((err = quic_client->connect(ip, port)) != srs_success) {
             return srs_error_wrap(err, "connect rtc upstream %s:%u failed", ip.c_str(), port);
         }
 
         srs_trace("rtc forward quic connect to %s:%u success", ip.c_str(), port);
 
-        // TODO: FIXME: may use the code below
-        /**
-         *
-         *  SrsQuicStream* control_stream = open_stream(0);
-         *  SrsQuicStream* medai_stream =open_stream(1);
-         *
-         *  control_stream->write("{stream_id:media_stream->get_id()});
-         */
-        int64_t quic_rtc_control_stream_id = -1;
-        if ((err = quic_client_->open_stream(&quic_rtc_control_stream_id)) != srs_success) {
-            return srs_error_wrap(err, "open quic control stream %ld failed", quic_rtc_control_stream_id);
+        int64_t rtc_forward_quic_stream = -1;
+        SrsQuicStream* stream = NULL;
+        if ((err = quic_client->open_stream(&rtc_forward_quic_stream, &stream)) != srs_success) {
+            return srs_error_wrap(err, "open quic control stream %ld failed", rtc_forward_quic_stream);
         }
-        srs_trace("rtc forward quic open ctrl stream %ld success", quic_rtc_control_stream_id);
 
-        int64_t quic_rtc_media_stream_id = -1;
-        if ((err = quic_client_->open_stream(&quic_rtc_media_stream_id)) != srs_success) {
-            return srs_error_wrap(err, "open quic media stream %ld failed", quic_rtc_media_stream_id);
-        }
-        srs_trace("rtc forward quic open media stream %ld success", quic_rtc_media_stream_id);
-
+        srs_trace("rtc forward quic open ctrl stream %ld success", rtc_forward_quic_stream);
 
         stringstream ss;
         ss << "{\"interface\":\"rtc_forward\", \"stream_url\":{\"vhost\":\"" << req_->vhost 
-           << "\",\"app\":\"" << req_->app << "\",\"stream\":\"" << req_->stream << "\"}" 
-           << ",\"media_stream_id\":" << quic_rtc_media_stream_id << "}";
+           << "\",\"app\":\"" << req_->app << "\",\"stream\":\"" << req_->stream << "\"}}";
         string control_msg = ss.str();
-        if ((err = quic_client_->write_stream_data(quic_rtc_control_stream_id, reinterpret_cast<const uint8_t*>(control_msg.data()), 
-                                                   control_msg.size())) != srs_success) {
-            return srs_error_wrap(err, "write quic contorl msg failed");
+        if (stream->write(reinterpret_cast<const uint8_t*>(control_msg.data()), control_msg.size(), 5 * SRS_UTIME_SECONDS) < 0) {
+            return srs_error_new(ERROR_RTC_FORWARD, "write quic contorl msg failed");
         }
 
         srs_trace("rtc forward send ctrl msg %s, waitting response", control_msg.c_str());
 
-        // TODO: FIXME: is quic need open stream packet?
-        string fake_msg = "open media stream";
-        if ((err = quic_client_->write_stream_data(quic_rtc_media_stream_id, reinterpret_cast<const uint8_t*>(fake_msg.data()), 
-                                                   fake_msg.size())) != srs_success) {
-            return srs_error_wrap(err, "write quic media fake  msg failed");
-        }
-
         string rsp_json;
         uint8_t ctrl_response[1500];
-        int nb_read = 0;
         while (true) {
-            if ((err = quic_client_->read_stream_data(quic_rtc_control_stream_id, ctrl_response, 
-                            sizeof(ctrl_response), &nb_read)) != srs_success && srs_error_code(err) != ERROR_SOCKET_TIMEOUT) {
-                return srs_error_wrap(err, "recv quic control msg failed");
+            int nb = stream->read(ctrl_response, sizeof(ctrl_response), 5 * SRS_UTIME_SECONDS);
+            if (nb == 0) {
+                return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
+            } else if (nb < 0) {
+                return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
             }
-    		rsp_json.append(reinterpret_cast<const char*>(ctrl_response), nb_read);
 
-            if (rsp_json.size() >= 2 && rsp_json[rsp_json.size() - 2] == '\r' && rsp_json[rsp_json.size() - 1] == '\n') {
+    		rsp_json.append(reinterpret_cast<const char*>(ctrl_response), nb);
+
+            if (rsp_json.size() >= 2 && rsp_json[rsp_json.size() - 2] == '\r' && 
+                    rsp_json[rsp_json.size() - 1] == '\n') {
                 rsp_json.erase(rsp_json.size() - 2, 2);
                 break;
             }
@@ -342,28 +308,43 @@ srs_error_t SrsRtcForwardReceiver::cycle()
         srs_cond_signal(cond_waiting_sdp_);
 
         while (true) {
+            if (request_keyframe_) {
+                request_keyframe_ = false;
+                stringstream ss;
+                ss << "{\"interface\":\"request_keyframe\"}";
+                string req = ss.str();
+                if (stream->write(reinterpret_cast<const uint8_t*>(req.data()), req.size(), 5 * SRS_UTIME_SECONDS) <= 0) {
+                    return srs_error_new(ERROR_RTC_FORWARD, "write request_keyframe failed");
+                }
+                srs_trace("write request_keyframe success");
+            }
             uint8_t* rtp_data = new uint8_t[1500];
-            int nb_read = 0;
-            if ((err = quic_client_->read_stream_data(quic_rtc_media_stream_id, rtp_data, 
-                            1500, &nb_read)) != srs_success && srs_error_code(err) != ERROR_SOCKET_TIMEOUT) {
-                srs_error("recv quic media msg failed");
-                break;
+            int nb = stream->read(rtp_data, 1500, 5 * SRS_UTIME_SECONDS);
+            srs_verbose("recv %d nb in quic stream", nb);
+            if (nb == 0) {
+                return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
+            } else if (nb < 0) {
+                if (stream->get_errno() == ETIMEDOUT) {
+                    continue;
+                }
+                return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
             }
 
 			SrsRtpPacket2* pkt = new SrsRtpPacket2();
     		SrsAutoFree(SrsRtpPacket2, pkt);
 
     		if (true) {
-    		    pkt->shared_msg = new SrsSharedPtrMessage();
-    		    pkt->shared_msg->wrap(reinterpret_cast<char*>(rtp_data), nb_read);
-
                 // TODO: FIXME: is it need to decode agagin?
 				if (true) {
-    		        SrsBuffer b(reinterpret_cast<char*>(rtp_data), nb_read);
+    		        SrsBuffer b(reinterpret_cast<char*>(rtp_data), nb);
     		        if ((err = pkt->decode(&b)) != srs_success) {
+                        continue;
     		            return srs_error_wrap(err, "decode rtp packet");
     		        }
                 }
+
+    		    pkt->shared_msg = new SrsSharedPtrMessage();
+    		    pkt->shared_msg->wrap(reinterpret_cast<char*>(rtp_data), nb);
 
                 // TODO: FIXME
                 if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
@@ -380,53 +361,66 @@ srs_error_t SrsRtcForwardReceiver::cycle()
     }
 }
 
-/** TODO: FIXME: SrsQuicStream as a class
-srs_error_t SrsRtcForwardSenderThread::cycle()
+void SrsRtcForwardPublisher::request_keyframe(uint32_t ssrc)
 {
-    srs_error_t err = srs_success;
+    request_keyframe_ = true;
+    /*
+    srs_trace("request key frame");
 
-    while (true) {
-        if ((err = trd_->pull()) != srs_success) {
-            return srs_error_wrap(err, "quic client io thread");
-        }
-
-        uint8_t buf[1500];
-        int nb_read = 0;
-        if ((err = quic_stream->read_stream_data(stream_id, buf, sizeof(buf), &nb_read)) != 
-                srs_success && srs_error_code(err) != ERROR_SOCKET_TIMEOUT) {
-            return srs_error_wrap(err, "read quic stream failed");
-        }
+    if (stream_ == NULL) {
+        return;
     }
 
-    return err;
+    stringstream ss;
+    ss << "{\"interface\":\"request_keyframe\"}";
+    string req = ss.str();
+    if (stream_->write(reinterpret_cast<const uint8_t*>(req.data()), req.size(), 5 * SRS_UTIME_SECONDS) <= 0) {
+        srs_error("write request_keyframe failed");
+        return;
+    }
+    srs_trace("write request_keyframe success");
+    */
 }
-*/
 
-SrsRtcForwardSender::SrsRtcForwardSender()
+SrsRtcForwardConsumer::SrsRtcForwardConsumer(SrsQuicStream* stream)
 {
     req_ = NULL;
     trd_ = NULL;
-    quic_conn_ = NULL;
-    media_stream_id_ = -1;
+    stream_ = stream;
 }
 
-SrsRtcForwardSender::~SrsRtcForwardSender()
+SrsRtcForwardConsumer::~SrsRtcForwardConsumer()
 {
     srs_freep(req_);
     srs_freep(trd_);
 }
 
-srs_error_t SrsRtcForwardSender::on_stream_open(SrsQuicConnection* conn, int64_t stream_id)
+srs_error_t SrsRtcForwardConsumer::start()
 {
-    return srs_success;
+    srs_error_t err = srs_success;
+
+    trd_ = new SrsSTCoroutine("rtc_forward_sender", this);
+    if ((err = trd_->start()) != srs_success) {
+        return srs_error_wrap(err, "start rtc forward send thread failed");
+    }
+
+    return err;
 }
 
-srs_error_t SrsRtcForwardSender::on_stream_close(SrsQuicConnection* conn, int64_t stream_id)
+srs_error_t SrsRtcForwardConsumer::process_req()
 {
-    return srs_success;
+    uint8_t forward_req[1500];
+    int nb = stream_->read(forward_req, sizeof(forward_req), 5 * SRS_UTIME_SECONDS);
+    if (nb == 0) {
+        return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
+    } else if (nb < 0) {
+        return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
+    }
+
+    return process_req_json(forward_req, nb);
 }
 
-srs_error_t SrsRtcForwardSender::process_rtc_forward_req(SrsQuicConnection* conn, int64_t stream_id, const uint8_t* data, size_t size)
+srs_error_t SrsRtcForwardConsumer::process_req_json(const uint8_t* data, size_t size)
 {
     srs_error_t err = srs_success;
 
@@ -448,11 +442,20 @@ srs_error_t SrsRtcForwardSender::process_rtc_forward_req(SrsQuicConnection* conn
     }
     string interface = prop->to_str(); 
 
-    if ((prop = json_obj->ensure_property_integer("media_stream_id")) == NULL) {
-        return srs_error_wrap(err, "not media_stream_id");
+    if (interface == "rtc_forward") {
+        return process_rtc_forward_req(json_obj);
+    } else if (interface == "request_keyframe") {
+        return process_request_keyframe_req(json_obj);
+    } else {
+        return srs_error_new(ERROR_RTC_FORWARD, "invalid req %s", interface.c_str());
     }
-    media_stream_id_ = prop->to_integer();
+}
 
+srs_error_t SrsRtcForwardConsumer::process_rtc_forward_req(SrsJsonObject* json_obj)
+{
+    srs_error_t err = srs_success;
+
+    SrsJsonAny* prop = NULL;
     if ((prop = json_obj->ensure_property_object("stream_url")) == NULL) {
         return srs_error_wrap(err, "not stream_url");
     }
@@ -474,8 +477,7 @@ srs_error_t SrsRtcForwardSender::process_rtc_forward_req(SrsQuicConnection* conn
     }
     req_->app = prop->to_str();
 
-    srs_trace("interface=%s, media_stream_id=%ld, stream_url=%s",
-        interface.c_str(), media_stream_id_, req_->get_stream_url().c_str());
+    srs_trace("stream_url=%s", req_->get_stream_url().c_str());
 
 	SrsRtcStream* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
@@ -489,78 +491,80 @@ srs_error_t SrsRtcForwardSender::process_rtc_forward_req(SrsQuicConnection* conn
     }
     
     // TODO: FIXME: use SrsJson* class to write json.
-    string control_response = "{\"rtc_stream_description\":{" + rtc_stream_description + "},";
-    trd_ = new SrsSTCoroutine("rtc_forward_sender", this);
-    if ((err = trd_->start()) != srs_success) {
-        control_response += "\"status\":\"failed\"}";
-    } else {
-        control_response += "\"status\":\"success\"}";
-    }
-    control_response += "\r\n";
+    string control_response = "{\"rtc_stream_description\":{" + rtc_stream_description + "}}\r\n";
 
     srs_trace("rtc forward ctrl response=%s", control_response.c_str());
 
-    return conn->write_stream_data(stream_id, reinterpret_cast<const uint8_t*>(control_response.data()), 
-                                   control_response.size());
-}
-
-// TODO: FIXME: We can impl like the code below.
-/**
- * srs_error_t cycle() 
- * {
- *     conn->recv_stream_data();
- * }
- */
-srs_error_t SrsRtcForwardSender::on_stream_data(SrsQuicConnection* conn, int64_t stream_id, const uint8_t* data, size_t datalen)
-{
-    quic_conn_ = conn;
-
-    srs_error_t err = srs_success;
-
-    if (media_stream_id_ == -1) {
-        if ((err = process_rtc_forward_req(conn, stream_id, data, datalen)) != srs_success) {
-            return srs_error_wrap(err, "process rtc forward req failed");
-        }
-    } else {
+    if (stream_->write(reinterpret_cast<const uint8_t*>(control_response.data()), 
+                          control_response.size(), 5 * SRS_UTIME_SECONDS) < 0) {
+        return srs_error_new(ERROR_RTC_FORWARD, "write quic control req failed");
     }
 
     return err;
 }
 
-srs_error_t SrsRtcForwardSender::cycle()
+srs_error_t SrsRtcForwardConsumer::process_request_keyframe_req(SrsJsonObject* json_obj)
+{
+    srs_trace("request key frame");
+
+    return do_request_keyframe();
+}
+
+srs_error_t SrsRtcForwardConsumer::cycle()
 {
     srs_error_t err = srs_success;
 
-	SrsRtcStream* rtc_source = NULL;
+    if ((err = process_req()) != srs_success) {
+        return srs_error_wrap(err, "process rtc forward req failed");
+    }
+
+    if ((err = rtc_forward()) != srs_success) {
+        return srs_error_wrap(err, "rtc forward failed");
+    }
+
+    return err;
+}
+
+srs_error_t SrsRtcForwardConsumer::do_request_keyframe()
+{
+    srs_error_t err = srs_success;
+
+    SrsRtcStream* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
 
-    if (true) {
-        srs_trace("on start rtc forward");
-        srs_error_t err = srs_success;
+    SrsRtcStreamDescription* stream_desc = rtc_source->get_stream_desc();
+    if (stream_desc == NULL) {
+        return err;
+    }
 
-	    SrsRtcStream* rtc_source = NULL;
-        if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
-            return srs_error_wrap(err, "create rtc_source");
-        }
-
-        SrsRtcStreamDescription* stream_desc = rtc_source->get_stream_desc();
-        if (stream_desc == NULL) {
-            return err;
-        }
-
-        uint32_t media_ssrc = 0;
-        ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
-        if (publish_stream != NULL) {
-	        for (int i = 0; i < (int)stream_desc->video_track_descs_.size(); ++i) {
-                SrsRtcTrackDescription* desc = stream_desc->video_track_descs_.at(i);
-                if (desc) {
-                    srs_trace("request key frame of ssrc %u", desc->ssrc_);
-                    publish_stream->request_keyframe(desc->ssrc_);
-                }
+    uint32_t media_ssrc = 0;
+    ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
+    if (publish_stream != NULL) {
+	    for (int i = 0; i < (int)stream_desc->video_track_descs_.size(); ++i) {
+            SrsRtcTrackDescription* desc = stream_desc->video_track_descs_.at(i);
+            if (desc) {
+                srs_trace("request key frame of ssrc %u", desc->ssrc_);
+                publish_stream->request_keyframe(desc->ssrc_);
             }
         }
+    }
+
+    return err;
+}
+
+srs_error_t SrsRtcForwardConsumer::rtc_forward()
+{
+    srs_error_t err = srs_success;
+
+    if ((err = do_request_keyframe()) != srs_success) {
+        return srs_error_wrap(err, "request key frame failed");
+    }
+
+    SrsRtcStream* rtc_source = NULL;
+    if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
+        return srs_error_wrap(err, "create rtc_source");
     }
 
     // TODO: FIXME: is possible to fetch packer using ISrsRtcHijacker->on_rtp_packet?
@@ -575,13 +579,27 @@ srs_error_t SrsRtcForwardSender::cycle()
         return srs_error_wrap(err, "dumps consumer, url=%s", req_->get_stream_url().c_str());
     }
 
+    uint8_t req_buf[1500];
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "quic client io thread");
         }
 
 		// TODO: FIXME:don't use magic number.
-        consumer->wait(1);
+        // consumer->wait(1);
+        
+        int nb = stream_->read(req_buf, sizeof(req_buf), 1 * SRS_UTIME_MILLISECONDS);
+        if (nb == 0) {
+            return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
+        } else if (nb < 0) {
+            if (stream_->get_errno() != ETIMEDOUT) {
+                return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
+            }
+        } else {
+            if ((err = process_req_json(req_buf, nb)) != srs_success) {
+                return srs_error_wrap(err, "invalid req");
+            }
+        }
 
         // TODO: FIXME: Handle error.
         vector<SrsRtpPacket2*> pkts;
@@ -592,7 +610,7 @@ srs_error_t SrsRtcForwardSender::cycle()
             continue;
         }
 
-        if (! quic_conn_) {
+        if (! stream_) {
             continue;
         }
 
@@ -604,9 +622,8 @@ srs_error_t SrsRtcForwardSender::cycle()
                 return srs_error_wrap(err, "encode packet");
             }
 
-            if ((err = quic_conn_->write_stream_data(media_stream_id_, 
-                    reinterpret_cast<const uint8_t*>(stream.data()), stream.pos())) != srs_success) {
-                return srs_error_wrap(err, "quic write stream failed");
+            if (stream_->write(reinterpret_cast<const uint8_t*>(stream.data()), stream.pos(), 5 * SRS_UTIME_SECONDS) < 0) {
+                return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
             }
         }
     }

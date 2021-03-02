@@ -48,12 +48,13 @@
 #include <vector>
 #include <sys/socket.h>
 
+class SrsJsonObject;
 class SrsQuicClient;
 class SrsQuicConnection;
-class SrsRtcForwardReceiver;
-class SrsRtcForwardSender;
+class SrsRtcForwardPublisher;
+class SrsRtcForwardConsumer;
 
-class SrsRtcForward : public ISrsRtcHijacker, public ISrsQuicConnHandler
+class SrsRtcForward : public ISrsRtcHijacker, public ISrsQuicStreamHandler
 {
 public:
     SrsRtcForward();
@@ -69,52 +70,47 @@ public:
     virtual srs_error_t on_start_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
     virtual void on_stop_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
     virtual srs_error_t on_start_consume(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req, SrsRtcConsumer* consumer);
-// Interface for ISrsQuicConnHandler
+// Interface for ISrsQuicStreamHandler
 public:
-    virtual srs_error_t on_new_connection(SrsQuicConnection* conn);
-    virtual srs_error_t on_connection_established(SrsQuicConnection* conn);
-    virtual srs_error_t on_close(SrsQuicConnection* conn);
-
-private:
-    std::map<std::string, SrsRtcForwardReceiver*> forward_stream_;
-    std::map<std::string, SrsRtcForwardSender*> forward_quic_connection_;
+    virtual srs_error_t on_new_stream(SrsQuicStream* stream);
 };
 
-class SrsRtcForwardReceiver : virtual public ISrsCoroutineHandler
+class SrsRtcForwardPublisher : virtual public ISrsCoroutineHandler, public ISrsRtcPublishStream
 {
 public:
-    SrsRtcForwardReceiver(SrsRequest* req);
-    ~SrsRtcForwardReceiver();
+    SrsRtcForwardPublisher(SrsRequest* req);
+    ~SrsRtcForwardPublisher();
 public:
     srs_error_t start();
 public:
+    virtual void request_keyframe(uint32_t);
     virtual srs_error_t cycle();
 private:
     SrsRequest* req_;
-    SrsQuicClient* quic_client_;
     SrsSTCoroutine* trd_;
     srs_cond_t cond_waiting_sdp_;
+    bool request_keyframe_;
 };
 
-class SrsRtcForwardSender : virtual public ISrsQuicStreamHandler, virtual public ISrsCoroutineHandler
+class SrsRtcForwardConsumer : virtual public ISrsCoroutineHandler
 {
 public:
-    SrsRtcForwardSender();
-    ~SrsRtcForwardSender();
-// Interface for ISrsQuicStreamHandler
+    SrsRtcForwardConsumer(SrsQuicStream* stream);
+    ~SrsRtcForwardConsumer();
 public:
-    virtual srs_error_t on_stream_open(SrsQuicConnection* conn, int64_t stream_id);
-    virtual srs_error_t on_stream_close(SrsQuicConnection* conn, int64_t stream_id);
-    virtual srs_error_t on_stream_data(SrsQuicConnection* conn, int64_t stream_id, const uint8_t* data, size_t datalen);
-public:
+    srs_error_t start();
     virtual srs_error_t cycle();
 private:
-    srs_error_t process_rtc_forward_req(SrsQuicConnection* conn, int64_t stream_id, const uint8_t* data, size_t size);
+    srs_error_t process_req();
+    srs_error_t process_req_json(const uint8_t* data, size_t size);
+    srs_error_t process_rtc_forward_req(SrsJsonObject* json_obj);
+    srs_error_t process_request_keyframe_req(SrsJsonObject* json_obj);
+    srs_error_t do_request_keyframe();
+    srs_error_t rtc_forward();
 private:
     SrsRequest* req_;
-    SrsQuicConnection* quic_conn_;
+    SrsQuicStream* stream_;
     SrsSTCoroutine* trd_;
-    int64_t media_stream_id_;
 };
 
 extern SrsRtcForward* _srs_rtc_forward;

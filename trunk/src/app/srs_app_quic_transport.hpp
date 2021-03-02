@@ -42,22 +42,14 @@
 #include <ngtcp2/ngtcp2.h>
 
 class SrsQuicTlsSession;
+class SrsQuicStream;
+class SrsQuicTransport;;
 
 enum SrsQuicStreamDirection
 {
     QuicStreamSendOnly = 1,
     QuicStreamRecvOnly = 2,
     QuicStreamSendRecv = 3,
-};
-
-class SrsQuicStreamStatus
-{
-public:
-    SrsQuicStreamStatus();
-    ~SrsQuicStreamStatus();
-private:
-    bool open_;
-    SrsQuicStreamDirection direction_;
 };
 
 // Quic stream buffer, use to store packet of stream to send.
@@ -77,9 +69,49 @@ private:
     std::string buffer_;
 };
 
+// Stream event handler for quic connection.
+class ISrsQuicStreamHandler
+{
+public:
+    ISrsQuicStreamHandler() {}
+    virtual ~ISrsQuicStreamHandler() {}
+public:
+    virtual srs_error_t on_new_stream(SrsQuicStream* stream) = 0;
+};
+
+class SrsQuicStream
+{
+    friend class SrsQuicTransport;
+public:
+    SrsQuicStream(int64_t stream_id, SrsQuicTransport* quic_transport);
+    ~SrsQuicStream();
+
+// API of SrsQuicStream
+public:
+    int write(const uint8_t* buf, size_t size, srs_utime_t timeout);
+    int read(uint8_t* buf, size_t buf_size, srs_utime_t timeout);
+
+    int64_t get_stream_id() const { return stream_id_; }
+    int get_errno() const { return errno_; }
+private:
+    void set_errno(int e) { errno_ = e; }
+    srs_error_t on_recv_from_quic_conn(const uint8_t* buf, size_t size);
+private:
+    srs_cond_t ready_to_read_;
+    std::deque<std::string> read_queue_;
+    srs_cond_t ready_to_write_;
+    std::deque<std::string> write_queue_;
+
+    int64_t stream_id_;
+    SrsQuicTransport* quic_transport_;
+private:
+    int errno_;
+};
+
 // Quic transport base class, process quic packets.
 class SrsQuicTransport : virtual public ISrsHourGlass
 {
+    friend class SrsQuicStream;
 public:
     SrsQuicTransport();
   	virtual ~SrsQuicTransport();
@@ -99,6 +131,9 @@ public:
     srs_error_t on_data(ngtcp2_path* path, const uint8_t* data, size_t size);
     ngtcp2_conn* conn() { return conn_; }
     std::string get_conn_id();
+    void set_stream_handler(ISrsQuicStreamHandler* stream_handler);
+private:
+    srs_error_t push_stream_data(int64_t stream_id, const uint8_t* data, size_t size);
 private:
 	srs_error_t update_rtt_timer();
     srs_error_t on_timer_quic_rexmit();
@@ -110,11 +145,11 @@ protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
 protected:
     virtual srs_error_t io_write_streams();
+    srs_error_t send_connection_close();
     // Get static secret to generate quic token.
     virtual uint8_t* get_static_secret() = 0;
     virtual size_t get_static_secret_len() = 0;
     virtual int send_packet(ngtcp2_path* path, uint8_t* data, const int size);
-    virtual srs_error_t check_conn_status();
 // Quic tls callback function
 public:
     int on_rx_key(ngtcp2_crypto_level level, const uint8_t *secret, size_t secretlen);
@@ -125,20 +160,20 @@ public:
     void set_tls_alert(uint8_t alert);
 // Ngtcp2 callback function
 public:
-    int recv_crypto_data(ngtcp2_crypto_level crypto_level, const uint8_t* data, size_t datalen);
-    virtual int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
     virtual int handshake_completed() = 0;
-	virtual int on_stream_open(int64_t stream_id);
-	virtual int on_stream_close(int64_t stream_id, uint64_t app_error_code);
+    int recv_crypto_data(ngtcp2_crypto_level crypto_level, const uint8_t* data, size_t datalen);
+    int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
+	int on_stream_open(int64_t stream_id);
+	int on_stream_close(int64_t stream_id, uint64_t app_error_code);
     int get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen);
     int update_key(uint8_t *rx_secret, uint8_t *tx_secret, ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
             ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv, const uint8_t *current_rx_secret,
             const uint8_t *current_tx_secret, size_t secretlen);
 // SrsQuic API
 public:
-    virtual srs_error_t open_stream(int64_t* stream_id);
-    virtual srs_error_t write_stream_data(const int64_t stream_id, const uint8_t* data, const size_t size);
-    virtual srs_error_t read_stream_data(const int64_t stream_id, uint8_t* buf, const size_t buf_size, int* nb_read);
+    // TODO: FIXME: add annotation.
+    virtual srs_error_t open_stream(int64_t* stream_id, SrsQuicStream** stream);
+    virtual srs_error_t close_stream(int64_t stream_id);
 
 protected:
     SrsHourGlass* timer_;
@@ -166,8 +201,10 @@ protected:
 
     SrsQuicTlsSession* tls_session_;
 protected:
-    std::map<int64_t, SrsQuicStreamStatus> stream_status_;
-    std::deque<SrsQuicStreamBuffer> stream_buffer_queue_;
+    std::string connection_close_packet_;
+    std::deque<SrsQuicStreamBuffer> stream_send_queue_;
+    std::map<int64_t, SrsQuicStream*> streams_;
+    ISrsQuicStreamHandler* stream_handler_;
 };
 
 #endif

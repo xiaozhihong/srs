@@ -327,7 +327,7 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
     SrsContextId cid = _srs_context->get_id();
     SrsQuicConnection* quic_conn = new SrsQuicConnection(this, cid);
     // TODO: FIXME: set handler by listen type.
-    quic_conn->set_conn_handler(_srs_rtc_forward);
+    quic_conn->set_stream_handler(_srs_rtc_forward);
     if ((err = quic_conn->accept(skt, &hd)) != srs_success) {
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");

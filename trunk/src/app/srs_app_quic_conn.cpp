@@ -56,7 +56,6 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid)
     server_ = s;
     timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
 
-    conn_handler_ = NULL;
     stream_handler_ = NULL;
 }
 
@@ -65,7 +64,6 @@ SrsQuicConnection::~SrsQuicConnection()
     _srs_quic_manager->unsubscribe(this);
 
     srs_freep(timer_);
-    srs_freep(conn_handler_);
 
     // TODO: FIXME: stream handler need to free?
     srs_freep(stream_handler_);
@@ -103,16 +101,6 @@ srs_error_t SrsQuicConnection::on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* 
     return on_data(&path, data, size);
 }
 
-void SrsQuicConnection::set_conn_handler(ISrsQuicConnHandler* conn_handler)
-{
-    conn_handler_ = conn_handler;
-}
-
-void SrsQuicConnection::set_stream_handler(ISrsQuicStreamHandler* stream_handler)
-{
-    stream_handler_ = stream_handler;
-}
-
 ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid)
 {
     ngtcp2_settings settings;
@@ -121,7 +109,7 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
     // TODO: FIXME: conf this values using struct like SrsQuicParam.
     settings.log_printf = ngtcp2_log_handle;
     settings.qlog.write = qlog_handle;
-    settings.initial_ts = srs_get_system_time();
+    settings.initial_ts = srs_get_system_startup_time();
   	settings.token.base = token;
   	settings.token.len = tokenlen;
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
@@ -156,24 +144,6 @@ size_t SrsQuicConnection::get_static_secret_len()
     return server_->get_quic_token()->get_static_secret_len();
 }
 
-int SrsQuicConnection::recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset,
-        const uint8_t *data, size_t datalen)
-{
-	int ret = SrsQuicTransport::recv_stream_data(flags, stream_id, offset, data, datalen);
-    if (ret != 0) {
-        return ret;
-    }
-
-    if (stream_handler_) {
-        srs_error_t err = stream_handler_->on_stream_data(this, stream_id, data, datalen);
-        if (err != srs_success) {
-            srs_warn("stream handler failed, err=%s", srs_error_desc(err).c_str());
-            srs_freep(err);
-        }
-    }
-    return 0;
-}
-
 int SrsQuicConnection::handshake_completed()
 {
 	srs_trace("quic connection handshake completed");
@@ -189,10 +159,6 @@ int SrsQuicConnection::handshake_completed()
     if (ret != 0) {
         srs_error("ngtcp2_conn_submit_new_token failed, ret=%d", ret);
         return -1;
-    }
-
-    if (conn_handler_) {
-        conn_handler_->on_connection_established(this);
     }
 
     return 0;

@@ -65,16 +65,11 @@ private:
 	virtual uint8_t* get_static_secret();
     virtual size_t get_static_secret_len();
 
-	virtual int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
 	virtual int handshake_completed();
-    virtual int on_stream_open(int64_t stream_id);
-    virtual int on_stream_close(int64_t stream_id, uint64_t app_error_code);
 
 // SrsQuicClient API
 public:
     srs_error_t connect(const std::string& ip, uint16_t port);
-    virtual srs_error_t open_stream(int64_t* stream_id);
-    virtual srs_error_t read_stream_data(const int64_t stream_id, uint8_t* buf, const size_t buf_size, int* nb_read);	
 private:
     // Quic client udp packet io recv thread.
     virtual srs_error_t cycle();

@@ -85,7 +85,7 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
     // TODO: FIXME: conf this values using SrsQuicParam struct.
     settings.log_printf = ngtcp2_log_handle;
     settings.qlog.write = qlog_handle;
-	settings.initial_ts = srs_get_system_time();
+	settings.initial_ts = srs_get_system_startup_time();
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
   	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
@@ -254,91 +254,11 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port)
     return err;
 }
 
-int SrsQuicClient::recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset,
-        const uint8_t *data, size_t datalen)
-{
-    int ret = SrsQuicTransport::recv_stream_data(flags, stream_id, offset, data, datalen);
-    if (ret != 0) {
-        return ret;
-    }
-
-    deque<string>& queue = stream_data_recv_queue_[stream_id];
-    // TODO: FIXME: check queue is out of recv buffer size.
-    queue.push_back(string(reinterpret_cast<const char*>(data), datalen));
-    // TODO: FIXME: check cond is valid.
-    srs_cond_t cond = stream_id_cond_[stream_id];
-
-    // notify data arrive, stream readable.
-    srs_cond_signal(cond);
-
-    return 0;
-}
-
 int SrsQuicClient::handshake_completed()
 {
     srs_trace("quic client handshake completed");
     srs_cond_signal(connection_cond_);
     return 0;
-}
-
-int SrsQuicClient::on_stream_open(int64_t stream_id)
-{
-    srs_trace("stream id %ld opened", stream_id);
-    srs_cond_t& cond = stream_id_cond_[stream_id];
-    srs_cond_signal(cond);
-
-    return 0;
-}
-
-int SrsQuicClient::on_stream_close(int64_t stream_id, uint64_t app_error_code)
-{
-    // TODO: FIXME: impl it.
-    return 0;
-}
-
-srs_error_t SrsQuicClient::read_stream_data(const int64_t stream_id, uint8_t* buf, const size_t buf_size, int* nb_read)
-{
-    srs_error_t err = srs_success;
-
-    deque<string>& queue = stream_data_recv_queue_[stream_id];
-    srs_cond_t cond = stream_id_cond_[stream_id];
-
-    if (! queue.empty()) {
-        string& stream_data = queue.front();
-        memcpy(buf, reinterpret_cast<const uint8_t*>(stream_data.data()), stream_data.size());
-        *nb_read = stream_data.size();
-        queue.pop_front();
-        return err;
-    }
-
-    // TODO: FIXME: timeout as a param of connect functin.
-    // Waiting to recv stream data, when readable, quic transport will signal the stream condition.
-    if (srs_cond_timedwait(cond, 1000 * SRS_UTIME_MILLISECONDS) != 0) {
-        return srs_error_new(ERROR_QUIC_CLIENT, "recv timeout or error");
-    }
-
-    string& stream_data = queue.front();
-    memcpy(buf, stream_data.data(), stream_data.size());
-    *nb_read = stream_data.size();
-    queue.pop_front();
-    return err;
-}
-
-srs_error_t SrsQuicClient::open_stream(int64_t* stream_id)
-{
-    srs_error_t err = srs_success;
-
-    if ((err = SrsQuicTransport::open_stream(stream_id)) != srs_success) {
-        return srs_error_wrap(err, "open stream failed");
-    }
-
-    // TODO: FIXME: check stream is opened?
-    srs_cond_t cond = srs_cond_new();
-    stream_id_cond_[*stream_id] = cond;
-
-    srs_trace("open stream id %ld success", *stream_id);
-
-    return err;
 }
 
 srs_error_t SrsQuicClient::cycle()

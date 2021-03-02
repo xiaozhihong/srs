@@ -47,30 +47,6 @@ class SrsUdpMuxSocket;
 class SrsQuicTlsServerSession;
 class SrsQuicConnection;
 
-// Connection event handler for QUIC.
-class ISrsQuicConnHandler
-{
-public:
-    ISrsQuicConnHandler() {}
-    virtual ~ISrsQuicConnHandler() {}
-public:
-    virtual srs_error_t on_new_connection(SrsQuicConnection* conn) = 0;
-    virtual srs_error_t on_connection_established(SrsQuicConnection* conn) = 0;
-    virtual srs_error_t on_close(SrsQuicConnection* conn) = 0;
-};
-
-// Stream event handler for quic connection.
-class ISrsQuicStreamHandler
-{
-public:
-    ISrsQuicStreamHandler() {}
-    virtual ~ISrsQuicStreamHandler() {}
-public:
-    virtual srs_error_t on_stream_open(SrsQuicConnection* conn, int64_t stream_id) = 0;
-    virtual srs_error_t on_stream_close(SrsQuicConnection* conn, int64_t stream_id) = 0;
-    virtual srs_error_t on_stream_data(SrsQuicConnection* conn, int64_t stream_id, const uint8_t* data, size_t datalen) = 0;
-};
-
 // Quic connection which accept from client.
 class SrsQuicConnection : public SrsQuicTransport, virtual public ISrsResource
     , virtual public ISrsDisposingHandler
@@ -81,15 +57,11 @@ public:
 public:
     srs_error_t accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd);
     srs_error_t on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* data, int size);
-public:
-    void set_conn_handler(ISrsQuicConnHandler* conn_handler);
-    void set_stream_handler(ISrsQuicStreamHandler* stream_handler);
 // Interface SrsQuicTransport
 private:
     virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
 	virtual uint8_t* get_static_secret();
     virtual size_t get_static_secret_len();
-    virtual int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
     virtual int handshake_completed();
     virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
                 sockaddr* remote_addr, const socklen_t remote_addrlen,
@@ -116,8 +88,6 @@ public:
 private:
     SrsContextId cid_;
     SrsQuicServer* server_;
-    ISrsQuicConnHandler* conn_handler_;
-    ISrsQuicStreamHandler* stream_handler_;
 };
 
 #endif

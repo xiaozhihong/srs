@@ -542,51 +542,6 @@ void SrsRtcStream::set_stream_desc(SrsRtcStreamDescription* stream_desc)
 
     if (stream_desc) {
         stream_desc_ = stream_desc->copy();
-
-        string json = "";
-        srs_error_t err = stream_desc_->to_json(json);
-        if (err != srs_success) {
-            srs_warn("to json failed, err=%s", srs_error_desc(err).c_str());
-            srs_freep(err);
-        }
-
-        srs_trace("json=%s", json.c_str());
-
-        if (true) {
-            string json_str = "{\"rtc_stream_description\":{" + json + "}}";
-            SrsRtcStreamDescription test_stream_desc; 
-			SrsJsonObject* req = NULL;
-            SrsAutoFree(SrsJsonObject, req);
-
-            SrsJsonAny* json = SrsJsonAny::loads(json_str);
-            if (!json || !json->is_object()) {
-                srs_error("sorry 1");
-                return;
-            }
-            req = json->to_object();
-
-            // Fetch params from req object.
-            SrsJsonAny* prop = NULL;
-            if ((prop = req->ensure_property_object("rtc_stream_description")) == NULL) {
-                srs_error("sorry 2");
-                return;
-            }
-            SrsJsonObject* obj = prop->to_object();
-            srs_error_t err = test_stream_desc.from_json(obj);
-            if (err != srs_success) {
-                srs_warn("to test_json failed, err=%s", srs_error_desc(err).c_str());
-                srs_freep(err);
-            }
-
-            string test_json = "";
-            err = test_stream_desc.to_json(test_json);
-            if (err != srs_success) {
-                srs_warn("to test_json failed, err=%s", srs_error_desc(err).c_str());
-                srs_freep(err);
-            }
-
-            srs_trace("test_json=%s", test_json.c_str());
-        }
     }
 }
 
