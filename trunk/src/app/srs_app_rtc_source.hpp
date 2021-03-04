@@ -307,7 +307,7 @@ public:
     virtual SrsMediaPayloadType generate_media_payload_type();
 public:
     virtual std::string type_str();
-    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t to_json(SrsJsonObject* obj);
     virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -333,7 +333,7 @@ public:
     srs_error_t set_h264_param_desc(std::string fmtp);
 public:
     virtual std::string type_str();
-    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t to_json(SrsJsonObject* obj);
     virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -367,7 +367,7 @@ public:
     srs_error_t set_opus_param_desc(std::string fmtp);
 public:
     virtual std::string type_str();
-    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t to_json(SrsJsonObject* obj);
     virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -385,7 +385,7 @@ public:
     virtual SrsMediaPayloadType generate_media_payload_type();
 public:
     virtual std::string type_str();
-    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t to_json(SrsJsonObject* obj);
     virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -403,7 +403,7 @@ public:
     virtual SrsMediaPayloadType generate_media_payload_type();
 public:
     virtual std::string type_str();
-    virtual srs_error_t to_json(std::string& json);
+    virtual srs_error_t to_json(SrsJsonObject* obj);
     virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -460,7 +460,7 @@ public:
 public:
     SrsRtcTrackDescription* copy();
 public:
-    srs_error_t to_json(std::string& json);
+    srs_error_t to_json(SrsJsonObject* obj);
     srs_error_t from_json(SrsJsonObject* obj);
 };
 
@@ -481,7 +481,7 @@ public:
     SrsRtcTrackDescription* find_track_description_by_ssrc(uint32_t ssrc);
 
 public:
-    srs_error_t to_json(std::string& json);
+    srs_error_t to_json(SrsJsonObject* obj);
     srs_error_t from_json(SrsJsonObject* obj);
 };
 

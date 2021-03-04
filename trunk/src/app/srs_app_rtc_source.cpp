@@ -1264,27 +1264,21 @@ std::string SrsCodecPayload::type_str()
     return "SrsCodecPayload";
 }
 
-srs_error_t SrsCodecPayload::to_json(std::string& json)
+srs_error_t SrsCodecPayload::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    stringstream ss;
-    ss << "\"type\":" << "\"" << type_ << "\","
-       << "\"pt\":" << (int)pt_ << ","
-       << "\"pt_of_publisher\":" << (int)pt_of_publisher_ << ","
-       << "\"name\":" << "\"" << name_ << "\","
-       << "\"sample\":" << sample_ << ",";
+    obj->set("type", SrsJsonAny::str(type_.c_str()));
+    obj->set("pt", SrsJsonAny::integer(pt_));
+    obj->set("pt_of_publisher", SrsJsonAny::integer(pt_of_publisher_));
+    obj->set("name", SrsJsonAny::str(name_.c_str()));
+    obj->set("sample", SrsJsonAny::integer(sample_));
 
-    ss << "\"rtcp_fbs\":[";
+    SrsJsonArray* arr_rtcp_fbs = SrsJsonAny::array();
+    obj->set("rtcp_fbs", arr_rtcp_fbs);
     for (size_t i = 0; i != rtcp_fbs_.size(); ++i) {
-        ss << "\"" << rtcp_fbs_[i] << "\"";
-        if ((i + 1) != rtcp_fbs_.size()) {
-            ss << ",";
-        }
+        arr_rtcp_fbs->add(SrsJsonAny::str(rtcp_fbs_[i].c_str()));
     }
-    ss << "]";
-
-    json = ss.str();
 
     return err;
 }
@@ -1430,22 +1424,20 @@ std::string SrsVideoPayload::type_str()
     return "SrsVideoPayload";
 }
 
-srs_error_t SrsVideoPayload::to_json(std::string& json)
+srs_error_t SrsVideoPayload::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    if ((err = SrsCodecPayload::to_json(json)) != srs_success) {
+    if ((err = SrsCodecPayload::to_json(obj)) != srs_success) {
         return srs_error_wrap(err, "codec payload to json failed");
     }
 
-    stringstream ss;
-    ss << ",\"h264_param\":{"
-       << "\"profile_level_id\":\"" << h264_param_.profile_level_id << "\","
-       << "\"packetization_mode\":\"" << h264_param_.packetization_mode << "\","
-       << "\"level_asymmerty_allow\":\"" << h264_param_.level_asymmerty_allow << "\""
-       << "}";
+    SrsJsonObject* obj_h264_param = SrsJsonAny::object();
+    obj->set("h264_param", obj_h264_param);
 
-    json += ss.str();
+    obj_h264_param->set("profile_level_id", SrsJsonAny::str(h264_param_.profile_level_id.c_str()));
+    obj_h264_param->set("packetization_mode", SrsJsonAny::str(h264_param_.packetization_mode.c_str()));
+    obj_h264_param->set("level_asymmerty_allow", SrsJsonAny::str(h264_param_.level_asymmerty_allow.c_str()));
 
     return err;
 }
@@ -1571,23 +1563,22 @@ std::string SrsAudioPayload::type_str()
     return "SrsAudioPayload";
 }
 
-srs_error_t SrsAudioPayload::to_json(std::string& json)
+srs_error_t SrsAudioPayload::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    if ((err = SrsCodecPayload::to_json(json)) != srs_success) {
+    if ((err = SrsCodecPayload::to_json(obj)) != srs_success) {
         return srs_error_wrap(err, "codec payload to json failed");
     }
 
-    stringstream ss;
-    ss << ",\"channel\":" << channel_ << ","
-       << "\"opus_param\":{"
-       << "\"minptime\":" << opus_param_.minptime << ","
-       << "\"use_inband_fec\":" << opus_param_.use_inband_fec << ","
-       << "\"usedtx\":" << opus_param_.usedtx
-       << "}";
+    obj->set("channel", SrsJsonAny::integer(channel_));
 
-    json += ss.str();
+    SrsJsonObject* obj_opus_param = SrsJsonAny::object();
+    obj->set("opus_param", obj_opus_param);
+
+    obj_opus_param->set("minptime", SrsJsonAny::integer(opus_param_.minptime));
+    obj_opus_param->set("use_inband_fec", SrsJsonAny::integer(opus_param_.use_inband_fec));
+    obj_opus_param->set("usedtx", SrsJsonAny::integer(opus_param_.usedtx));
 
     return err;
 }
@@ -1679,18 +1670,15 @@ std::string SrsRedPayload::type_str()
     return "SrsRedPayload";
 }
 
-srs_error_t SrsRedPayload::to_json(std::string& json)
+srs_error_t SrsRedPayload::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    if ((err = SrsCodecPayload::to_json(json)) != srs_success) {
+    if ((err = SrsCodecPayload::to_json(obj)) != srs_success) {
         return srs_error_wrap(err, "codec payload to json failed");
     }
 
-    stringstream ss;
-    ss << ",\"channel\":" << channel_;
-
-    json += ss.str();
+    obj->set("channel", SrsJsonAny::integer(channel_));
 
     return err;
 }
@@ -1758,18 +1746,15 @@ std::string SrsRtxPayloadDes::type_str()
     return "SrsRtxPayloadDes";
 }
 
-srs_error_t SrsRtxPayloadDes::to_json(std::string& json)
+srs_error_t SrsRtxPayloadDes::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    if ((err = SrsCodecPayload::to_json(json)) != srs_success) {
+    if ((err = SrsCodecPayload::to_json(obj)) != srs_success) {
         return srs_error_wrap(err, "codec payload to json failed");
     }
 
-    stringstream ss;
-    ss << ",\"apt\":" << (int)apt_;
-
-    json += ss.str();
+    obj->set("apt", SrsJsonAny::integer(apt_));
 
     return err;
 }
@@ -1908,69 +1893,85 @@ SrsRtcTrackDescription* SrsRtcTrackDescription::copy()
     return cp;
 }
 
-srs_error_t SrsRtcTrackDescription::to_json(std::string& json)
+srs_error_t SrsRtcTrackDescription::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    stringstream ss;
-    ss << "\"type\":\"" << type_ << "\","
-       << "\"id\":\"" << id_ << "\","
-       << "\"ssrc\":" << ssrc_ << ","
-       << "\"fec_ssrc\":" << fec_ssrc_ << ","
-       << "\"rtx_ssrc\":" << rtx_ssrc_ << ",";
+    obj->set("type", SrsJsonAny::str(type_.c_str()));
+    obj->set("id", SrsJsonAny::str(id_.c_str()));
+    obj->set("ssrc", SrsJsonAny::integer(ssrc_));
+    obj->set("fec_ssrc", SrsJsonAny::integer(fec_ssrc_));
+    obj->set("rtx_ssrc", SrsJsonAny::integer(rtx_ssrc_));
 
-    ss << "\"extmaps\":[";
-    size_t i = 0;
+    SrsJsonArray* arr_extmaps = SrsJsonAny::array();
+    obj->set("extmaps", arr_extmaps);
     for (std::map<int, std::string>::iterator iter = extmaps_.begin(); iter != extmaps_.end(); ++iter) {
-        ss << "{\"key\":" << iter->first << ",\"val\":\"" << iter->second << "\"}";
-        if (++i != extmaps_.size()) {
-            ss << ",";
-        }
+        SrsJsonObject* obj_ext = SrsJsonAny::object();
+        obj_ext->set("key", SrsJsonAny::integer(iter->first));
+        obj_ext->set("val", SrsJsonAny::str(iter->second.c_str()));
+        arr_extmaps->add(obj_ext);
     }
-    ss << "],";
 
-    ss << "\"is_active\":" << is_active_ << ","
-       << "\"direction\":\"" << direction_ << "\","
-       << "\"mid\":\"" << mid_ << "\","
-       << "\"msid\":\"" << msid_ << "\"";
+    obj->set("is_active", SrsJsonAny::integer(is_active_));
+    obj->set("direction", SrsJsonAny::str(direction_.c_str()));
+    obj->set("mid", SrsJsonAny::str(mid_.c_str()));
+    obj->set("msid", SrsJsonAny::str(msid_.c_str()));
 
     if (media_) {
-        ss << ",\"media\":{\"type_str\":\"" << media_->type_str() << "\",\"context\":{";
-        string media_json_str = "";
-        if ((err = media_->to_json(media_json_str)) != srs_success) {
+        SrsJsonObject* obj_media = SrsJsonAny::object();
+        obj->set("media", obj_media);
+
+        obj_media->set("type_str", SrsJsonAny::str(media_->type_str().c_str()));
+
+        SrsJsonObject* obj_context = SrsJsonAny::object();
+        obj_media->set("context", obj_context);
+
+        if ((err = media_->to_json(obj_context)) != srs_success) {
             return srs_error_wrap(err, "encode media to json failed");
         }
-        ss << media_json_str << "}}";
     }
 
     if (red_) {
-        ss << ",\"red\":{\"type_str\":\"" << red_->type_str() << "\",\"context\":{";
-        string red_json_str = "";
-        if ((err = red_->to_json(red_json_str)) != srs_success) {
+        SrsJsonObject* obj_red = SrsJsonAny::object();
+        obj->set("red", obj_red);
+
+        obj_red->set("type_str", SrsJsonAny::str(media_->type_str().c_str()));
+
+        SrsJsonObject* obj_context = SrsJsonAny::object();
+        obj_red->set("context", obj_context);
+
+        if ((err = media_->to_json(obj_context)) != srs_success) {
             return srs_error_wrap(err, "encode red to json failed");
         }
-        ss << red_json_str << "}}";
     }
 
     if (rtx_) {
-        ss << ",\"rtx\":{\"type_str\":\"" << rtx_->type_str() << "\",\"context\":{";
-        string rtx_json_str = "";
-        if ((err = rtx_->to_json(rtx_json_str)) != srs_success) {
+        SrsJsonObject* obj_rtx = SrsJsonAny::object();
+        obj->set("rtx", obj_rtx);
+
+        obj_rtx->set("type_str", SrsJsonAny::str(media_->type_str().c_str()));
+
+        SrsJsonObject* obj_context = SrsJsonAny::object();
+        obj_rtx->set("context", obj_context);
+
+        if ((err = media_->to_json(obj_context)) != srs_success) {
             return srs_error_wrap(err, "encode rtx to json failed");
         }
-        ss << rtx_json_str << "}}";
     }
 
     if (ulpfec_) {
-        ss << ",\"ulpfec\":{\"type_str\":\"" << ulpfec_->type_str() << "\",\"context\":{";
-        string ulpfec_json_str = "";
-        if ((err = ulpfec_->to_json(ulpfec_json_str)) != srs_success) {
-            return srs_error_wrap(err, "encode ulpfec to json failed");
-        }
-        ss << ulpfec_json_str << "}}";
-    }
+        SrsJsonObject* obj_ulpfec = SrsJsonAny::object();
+        obj->set("ulpfec", obj_ulpfec);
 
-    json = ss.str();
+        obj_ulpfec->set("type_str", SrsJsonAny::str(media_->type_str().c_str()));
+
+        SrsJsonObject* obj_context = SrsJsonAny::object();
+        obj_ulpfec->set("context", obj_context);
+
+        if ((err = media_->to_json(obj_context)) != srs_success) {
+            return srs_error_wrap(err, "encode rtx to json failed");
+        }
+    }
 
     return err;
 }
@@ -2155,36 +2156,33 @@ SrsRtcTrackDescription* SrsRtcStreamDescription::find_track_description_by_ssrc(
     return NULL;
 }
 
-srs_error_t SrsRtcStreamDescription::to_json(std::string& json)
+srs_error_t SrsRtcStreamDescription::to_json(SrsJsonObject* obj)
 {
     srs_error_t err = srs_success;
 
-    stringstream ss;
-    ss << "\"id\":\"" << id_ << "\", \"audio_track_desc\":{";
-
-    string audio_track_desc_obj = "";
+    obj->set("id", SrsJsonAny::str(id_.c_str()));
+    
     if (audio_track_desc_ != NULL) {
-        if ((err = audio_track_desc_->to_json(audio_track_desc_obj)) != srs_success) {
+        SrsJsonObject* obj_audio_track_desc = SrsJsonAny::object();
+        obj->set("audio_track_desc", obj_audio_track_desc);
+
+        if ((err = audio_track_desc_->to_json(obj_audio_track_desc)) != srs_success) {
             return srs_error_wrap(err, "audio track desc to json failed");
         }
     }
 
-    ss << audio_track_desc_obj << "}, \"video_track_descs\":[";
+    SrsJsonArray* arr_video_track_descs = SrsJsonAny::array();
+    obj->set("video_track_descs", arr_video_track_descs);
     for (size_t i = 0; i < video_track_descs_.size(); ++i) {
         SrsRtcTrackDescription* desc = video_track_descs_[i];
 
-        string video_track_desc_obj = "";
-        if ((err = desc->to_json(video_track_desc_obj)) != srs_success) {
+        SrsJsonObject* obj_video_trace_desc = SrsJsonAny::object();
+        if ((err = desc->to_json(obj_video_trace_desc)) != srs_success) {
             return srs_error_wrap(err, "video track desc to json failed");
         }
-        ss << "{" << video_track_desc_obj << "}";
-        if ((i + 1) != video_track_descs_.size()) {
-            ss << ",";
-        }
-    }
-    ss << "]";
 
-    json = ss.str();
+        arr_video_track_descs->add(obj_video_trace_desc);
+    }
 
     return err;
 }

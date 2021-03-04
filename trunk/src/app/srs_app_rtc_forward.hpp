@@ -75,6 +75,8 @@ public:
     virtual srs_error_t on_new_stream(SrsQuicStream* stream);
 };
 
+// TODO: FIXME: rename it.
+// Pull rtc stream from remote, and publish rtc stream in local.
 class SrsRtcForwardPublisher : virtual public ISrsCoroutineHandler, public ISrsRtcPublishStream
 {
 public:
@@ -92,6 +94,8 @@ private:
     bool request_keyframe_;
 };
 
+// TODO: FIXME: rename it.
+// Process pull rtc stream requet, and send rtc stream over quic.
 class SrsRtcForwardConsumer : virtual public ISrsCoroutineHandler
 {
 public:

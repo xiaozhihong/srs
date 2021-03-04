@@ -176,7 +176,7 @@ void SrsQuicStreamBuffer::consumed(const size_t size)
 SrsQuicStream::SrsQuicStream(int64_t stream_id, SrsQuicTransport* transport)
     : stream_id_(stream_id)
     , quic_transport_(transport)
-    , errno_(0)
+    , last_err_(SrsQuicErrorSuccess)
 {
     ready_to_read_ = srs_cond_new();
     ready_to_write_ = srs_cond_new();
@@ -190,6 +190,12 @@ SrsQuicStream::~SrsQuicStream()
 
 int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
 {
+    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
+        if (last_err_ == SrsQuicErrorEOF) {
+            return 0;
+        }
+        return -1;
+    }
     // TODO: FIXME: quic packet is received same as we send?
 
     // Split data into packet because UDP have max packet size.
@@ -219,6 +225,13 @@ int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
 // TODO: FIXME: this function like readmsg more?
 int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
 {
+    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
+        if (last_err_ == SrsQuicErrorEOF) {
+            return 0;
+        }
+        return -1;
+    }
+
     // TODO: FIXME: check buf and buf_size.
     if (! read_queue_.empty()) {
         string& data = read_queue_.front();
@@ -229,12 +242,20 @@ int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
     }
 
     if (srs_cond_timedwait(ready_to_read_, timeout) != 0) {
-        set_errno((int)ETIMEDOUT);
+        set_last_error(SrsQuicErrorTimeout);
+        return -1;
+    }
+
+    // TODO: FIXME: rewrite this function make it simplify.
+    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
+        if (last_err_ == SrsQuicErrorEOF) {
+            return 0;
+        }
         return -1;
     }
 
     if (read_queue_.empty()) {
-        set_errno((int)EIO);
+        set_last_error(SrsQuicErrorIO);
         return -1;
     }
 
@@ -245,7 +266,7 @@ int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
     return size;
 }
 
-srs_error_t SrsQuicStream::on_recv_from_quic_conn(const uint8_t* buf, size_t size)
+srs_error_t SrsQuicStream::on_recv_from_quic_transport(const uint8_t* buf, size_t size)
 {
     srs_error_t err = srs_success;
 
@@ -253,6 +274,22 @@ srs_error_t SrsQuicStream::on_recv_from_quic_conn(const uint8_t* buf, size_t siz
     srs_cond_signal(ready_to_read_);
 
     return err;
+}
+
+void SrsQuicStream::on_open(SrsQuicTransport* transport)
+{
+    srs_assert(transport == quic_transport_);
+}
+
+void SrsQuicStream::on_close(SrsQuicTransport* transport)
+{
+    srs_assert(transport == quic_transport_);
+
+    quic_transport_ = NULL;
+    set_last_error(SrsQuicErrorBadStream);
+
+    // Notify st-thread which waiting read result.
+    srs_cond_signal(ready_to_read_);
 }
 
 SrsQuicTransport::SrsQuicTransport()
@@ -511,7 +548,7 @@ int SrsQuicTransport::recv_stream_data(uint32_t flags, int64_t stream_id, uint64
     }
 
     SrsQuicStream* stream = iter->second;
-    srs_error_t err = stream->on_recv_from_quic_conn(data, datalen);
+    srs_error_t err = stream->on_recv_from_quic_transport(data, datalen);
     if (err != srs_success) {
         srs_freep(err);
         return -1;
@@ -526,6 +563,7 @@ int SrsQuicTransport::on_stream_open(int64_t stream_id)
 
     // New quic open from peer.
     SrsQuicStream* new_stream = new SrsQuicStream(stream_id, this);
+    new_stream->on_open(this);
     streams_.insert(make_pair(stream_id, new_stream));
 
     if (stream_handler_) {
@@ -546,7 +584,10 @@ int SrsQuicTransport::on_stream_close(int64_t stream_id, uint64_t app_error_code
         }
 
         SrsQuicStream* stream = iter->second;
-        // TODO: FIXME: set stream fin flag.
+        // We never free stream in SrsQuicTransport class, the owner of SrsQuicStream
+        // must manage life cycle of it.
+        stream->on_close(this);
+        streams_.erase(stream_id);
     }
 
     return 0;

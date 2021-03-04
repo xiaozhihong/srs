@@ -387,8 +387,10 @@ srs_error_t SrsQuicTlsClientSession::init(const SrsQuicTlsContext* quic_tls_ctx,
     // TODO: FIXME: have better name? or config host name.
     SSL_set_tlsext_host_name(ssl_, "127.0.0.1");
 
-    SSL_set_msg_callback(ssl_, SSL_trace);
-    SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
+    if (false) {
+        SSL_set_msg_callback(ssl_, SSL_trace);
+        SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
+    }
 
     return err;
 }
@@ -417,8 +419,10 @@ srs_error_t SrsQuicTlsServerSession::init(const SrsQuicTlsContext* quic_tls_ctx,
     SSL_set_accept_state(ssl_);
     SSL_set_quic_early_data_enabled(ssl_, 1);
 
-    SSL_set_msg_callback(ssl_, SSL_trace);
-    SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
+    if (false) {
+        SSL_set_msg_callback(ssl_, SSL_trace);
+        SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
+    }
 
     return err;
 }

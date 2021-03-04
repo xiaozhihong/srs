@@ -165,6 +165,7 @@ srs_error_t SrsRtcForward::on_new_stream(SrsQuicStream* stream)
 {
     srs_error_t err = srs_success;
 
+    // TODO: FIXME: manger by streamurl.
     SrsRtcForwardConsumer* rtc_forward_consumer = new SrsRtcForwardConsumer(stream);
     if ((err = rtc_forward_consumer->start()) != srs_success) {
         return srs_error_wrap(err, "rtc forward consumer start failed");
@@ -247,10 +248,20 @@ srs_error_t SrsRtcForwardPublisher::cycle()
 
         srs_trace("rtc forward quic open ctrl stream %ld success", rtc_forward_quic_stream);
 
-        stringstream ss;
-        ss << "{\"interface\":\"rtc_forward\", \"stream_url\":{\"vhost\":\"" << req_->vhost 
-           << "\",\"app\":\"" << req_->app << "\",\"stream\":\"" << req_->stream << "\"}}";
-        string control_msg = ss.str();
+        SrsJsonObject* obj = SrsJsonAny::object();
+        SrsAutoFree(SrsJsonObject, obj);
+
+        obj->set("interface", SrsJsonAny::str("rtc_forward"));
+
+        SrsJsonObject* obj_stream_url = SrsJsonAny::object();
+        obj->set("stream_url", obj_stream_url);
+
+        obj_stream_url->set("vhost", SrsJsonAny::str(req_->vhost.c_str()));
+        obj_stream_url->set("app", SrsJsonAny::str(req_->app.c_str()));
+        obj_stream_url->set("stream", SrsJsonAny::str(req_->stream.c_str()));
+
+        string control_msg = obj->dumps();
+
         if (stream->write(reinterpret_cast<const uint8_t*>(control_msg.data()), control_msg.size(), 5 * SRS_UTIME_SECONDS) < 0) {
             return srs_error_new(ERROR_RTC_FORWARD, "write quic contorl msg failed");
         }
@@ -293,8 +304,8 @@ srs_error_t SrsRtcForwardPublisher::cycle()
     		    return srs_error_new(ERROR_RTC_FORWARD, "json no found rtc_stream_description", rsp_json.c_str());
     		}
 
-            // Deserialize rtc stream description into SrsRtcStreamDescription, rtc play stream need negotiate 
-            // to publish stream.
+            // Deserialize rtc stream description into SrsRtcStreamDescription, 
+            // rtc play stream need negotiate to publish stream.
             SrsJsonObject* obj = prop->to_object();
             SrsRtcStreamDescription* stream_desc = new SrsRtcStreamDescription();
             if ((err = stream_desc->from_json(obj)) != srs_success) {
@@ -310,21 +321,24 @@ srs_error_t SrsRtcForwardPublisher::cycle()
         while (true) {
             if (request_keyframe_) {
                 request_keyframe_ = false;
-                stringstream ss;
-                ss << "{\"interface\":\"request_keyframe\"}";
-                string req = ss.str();
+
+                SrsJsonObject* obj = SrsJsonAny::object();
+                SrsAutoFree(SrsJsonObject, obj);
+                obj->set("interface", SrsJsonAny::str("request_keyframe"));
+                string req = obj->dumps();
                 if (stream->write(reinterpret_cast<const uint8_t*>(req.data()), req.size(), 5 * SRS_UTIME_SECONDS) <= 0) {
                     return srs_error_new(ERROR_RTC_FORWARD, "write request_keyframe failed");
                 }
                 srs_trace("write request_keyframe success");
             }
+
             uint8_t* rtp_data = new uint8_t[1500];
             int nb = stream->read(rtp_data, 1500, 5 * SRS_UTIME_SECONDS);
             srs_verbose("recv %d nb in quic stream", nb);
             if (nb == 0) {
                 return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
             } else if (nb < 0) {
-                if (stream->get_errno() == ETIMEDOUT) {
+                if (stream->get_last_error() == SrsQuicErrorTimeout) {
                     continue;
                 }
                 return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
@@ -333,30 +347,28 @@ srs_error_t SrsRtcForwardPublisher::cycle()
 			SrsRtpPacket2* pkt = new SrsRtpPacket2();
     		SrsAutoFree(SrsRtpPacket2, pkt);
 
-    		if (true) {
-                // TODO: FIXME: is it need to decode agagin?
-				if (true) {
-    		        SrsBuffer b(reinterpret_cast<char*>(rtp_data), nb);
-    		        if ((err = pkt->decode(&b)) != srs_success) {
-                        continue;
-    		            return srs_error_wrap(err, "decode rtp packet");
-    		        }
-                }
+            // TODO: FIXME: is it need to decode agagin?
+			if (true) {
+    		    SrsBuffer b(reinterpret_cast<char*>(rtp_data), nb);
+    		    if ((err = pkt->decode(&b)) != srs_success) {
+                    continue;
+    		        return srs_error_wrap(err, "decode rtp packet");
+    		    }
+            }
 
-    		    pkt->shared_msg = new SrsSharedPtrMessage();
-    		    pkt->shared_msg->wrap(reinterpret_cast<char*>(rtp_data), nb);
+    		pkt->shared_msg = new SrsSharedPtrMessage();
+    		pkt->shared_msg->wrap(reinterpret_cast<char*>(rtp_data), nb);
 
-                // TODO: FIXME
-                if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
-                    pkt->frame_type = SrsFrameTypeAudio;
-                } else {
-                    pkt->frame_type = SrsFrameTypeVideo;
-                }
+            // TODO: FIXME
+            if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
+                pkt->frame_type = SrsFrameTypeAudio;
+            } else {
+                pkt->frame_type = SrsFrameTypeVideo;
+            }
 
-			    if ((err = rtc_source->on_rtp(pkt)) != srs_success) {
-                    return srs_error_wrap(err, "process rtp packet failed");
-                }
-    		}
+			if ((err = rtc_source->on_rtp(pkt)) != srs_success) {
+                return srs_error_wrap(err, "process rtp packet failed");
+            }
         }
     }
 }
@@ -364,22 +376,6 @@ srs_error_t SrsRtcForwardPublisher::cycle()
 void SrsRtcForwardPublisher::request_keyframe(uint32_t ssrc)
 {
     request_keyframe_ = true;
-    /*
-    srs_trace("request key frame");
-
-    if (stream_ == NULL) {
-        return;
-    }
-
-    stringstream ss;
-    ss << "{\"interface\":\"request_keyframe\"}";
-    string req = ss.str();
-    if (stream_->write(reinterpret_cast<const uint8_t*>(req.data()), req.size(), 5 * SRS_UTIME_SECONDS) <= 0) {
-        srs_error("write request_keyframe failed");
-        return;
-    }
-    srs_trace("write request_keyframe success");
-    */
 }
 
 SrsRtcForwardConsumer::SrsRtcForwardConsumer(SrsQuicStream* stream)
@@ -486,12 +482,19 @@ srs_error_t SrsRtcForwardConsumer::process_rtc_forward_req(SrsJsonObject* json_o
 
     // Serialize rtc stream description, send back to caller.
     string rtc_stream_description = "";
-    if ((err = rtc_source->get_stream_desc()->to_json(rtc_stream_description)) != srs_success) {
+    SrsJsonObject* obj = SrsJsonAny::object();
+    SrsAutoFree(SrsJsonObject, obj);
+
+    SrsJsonObject* obj_rtc_stream_description = SrsJsonAny::object();
+    obj->set("rtc_stream_description", obj_rtc_stream_description);
+
+    if ((err = rtc_source->get_stream_desc()->to_json(obj_rtc_stream_description)) != srs_success) {
         return srs_error_wrap(err, "rtc stream description to json failed");
     }
     
-    // TODO: FIXME: use SrsJson* class to write json.
-    string control_response = "{\"rtc_stream_description\":{" + rtc_stream_description + "}}\r\n";
+    string control_response = obj->dumps();
+    // TODO: FIXME: how to split msg into quic stream.
+    control_response += "\r\n";
 
     srs_trace("rtc forward ctrl response=%s", control_response.c_str());
 
@@ -592,7 +595,7 @@ srs_error_t SrsRtcForwardConsumer::rtc_forward()
         if (nb == 0) {
             return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
         } else if (nb < 0) {
-            if (stream_->get_errno() != ETIMEDOUT) {
+            if (stream_->get_last_error() != SrsQuicErrorTimeout) {
                 return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
             }
         } else {

@@ -79,6 +79,15 @@ public:
     virtual srs_error_t on_new_stream(SrsQuicStream* stream) = 0;
 };
 
+enum SrsQuicError
+{
+    SrsQuicErrorSuccess = 0,
+    SrsQuicErrorTimeout = 1,
+    SrsQuicErrorIO = 2,
+    SrsQuicErrorBadStream = 3,
+    SrsQuicErrorEOF = 4,
+};
+
 class SrsQuicStream
 {
     friend class SrsQuicTransport;
@@ -92,10 +101,13 @@ public:
     int read(uint8_t* buf, size_t buf_size, srs_utime_t timeout);
 
     int64_t get_stream_id() const { return stream_id_; }
-    int get_errno() const { return errno_; }
+    SrsQuicError get_last_error() const { return last_err_; }
 private:
-    void set_errno(int e) { errno_ = e; }
-    srs_error_t on_recv_from_quic_conn(const uint8_t* buf, size_t size);
+    void on_open(SrsQuicTransport* transport);
+    void on_close(SrsQuicTransport* transport);
+private:
+    void set_last_error(SrsQuicError err) { last_err_ = err; }
+    srs_error_t on_recv_from_quic_transport(const uint8_t* buf, size_t size);
 private:
     srs_cond_t ready_to_read_;
     std::deque<std::string> read_queue_;
@@ -103,9 +115,11 @@ private:
     std::deque<std::string> write_queue_;
 
     int64_t stream_id_;
+    // Quic transport this stream belong, when transport closed, the pointer changed to NULL,
+    // and all the operator(read/write) of this stream will return error.
     SrsQuicTransport* quic_transport_;
 private:
-    int errno_;
+    SrsQuicError last_err_;
 };
 
 // Quic transport base class, process quic packets.
@@ -117,7 +131,7 @@ public:
   	virtual ~SrsQuicTransport();
 protected:
     // Helper function to buid struct ngtcp2_path.
-    virtual ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
+    ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
         sockaddr* remote_addr, const socklen_t remote_addrlen);
     // Helper function to build quic settings, client/server role have different settings.
     virtual ngtcp2_settings build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid) = 0;
