@@ -76,7 +76,7 @@ public:
     ISrsQuicStreamHandler() {}
     virtual ~ISrsQuicStreamHandler() {}
 public:
-    virtual srs_error_t on_new_stream(SrsQuicStream* stream) = 0;
+    virtual srs_error_t on_new_stream(int64_t stream_id) = 0;
 };
 
 enum SrsQuicError
@@ -101,12 +101,10 @@ public:
     int read(uint8_t* buf, size_t buf_size, srs_utime_t timeout);
 
     int64_t get_stream_id() const { return stream_id_; }
-    SrsQuicError get_last_error() const { return last_err_; }
 private:
     void on_open(SrsQuicTransport* transport);
     void on_close(SrsQuicTransport* transport);
 private:
-    void set_last_error(SrsQuicError err) { last_err_ = err; }
     srs_error_t on_recv_from_quic_transport(const uint8_t* buf, size_t size);
 private:
     srs_cond_t ready_to_read_;
@@ -118,8 +116,6 @@ private:
     // Quic transport this stream belong, when transport closed, the pointer changed to NULL,
     // and all the operator(read/write) of this stream will return error.
     SrsQuicTransport* quic_transport_;
-private:
-    SrsQuicError last_err_;
 };
 
 // Quic transport base class, process quic packets.
@@ -146,7 +142,10 @@ public:
     ngtcp2_conn* conn() { return conn_; }
     std::string get_conn_id();
     void set_stream_handler(ISrsQuicStreamHandler* stream_handler);
+    SrsQuicError get_last_error() const { return last_err_; }
 private:
+    void set_last_error(SrsQuicError err) { last_err_ = err; }
+    void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
     srs_error_t push_stream_data(int64_t stream_id, const uint8_t* data, size_t size);
 private:
 	srs_error_t update_rtt_timer();
@@ -186,8 +185,10 @@ public:
 // SrsQuic API
 public:
     // TODO: FIXME: add annotation.
-    virtual srs_error_t open_stream(int64_t* stream_id, SrsQuicStream** stream);
+    virtual srs_error_t open_stream(int64_t* stream_id);
     virtual srs_error_t close_stream(int64_t stream_id);
+    int write(int64_t stream_id, const uint8_t* buf, size_t size, srs_utime_t timeout);
+    int read(int64_t stream_id, uint8_t* buf, size_t buf_size, srs_utime_t timeout);
 
 protected:
     SrsHourGlass* timer_;
@@ -219,6 +220,7 @@ protected:
     std::deque<SrsQuicStreamBuffer> stream_send_queue_;
     std::map<int64_t, SrsQuicStream*> streams_;
     ISrsQuicStreamHandler* stream_handler_;
+    SrsQuicError last_err_;
 };
 
 #endif

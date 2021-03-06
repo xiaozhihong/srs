@@ -46,6 +46,15 @@ enum SrsQuicListenerType
     SrsQuicListenerRtcForward = 0,
 };
 
+class ISrsQuicConnectionHandler
+{
+public:
+    ISrsQuicConnectionHandler() {}
+    ~ISrsQuicConnectionHandler() {}
+public:
+    virtual srs_error_t on_new_connection(SrsQuicConnection* conn) = 0;
+};
+
 // The QUIC server instance, listen UDP port, handle UDP packet, manage QUIC connections.
 class SrsQuicServer : virtual public ISrsUdpMuxHandler, virtual public ISrsHourGlass
 {
@@ -56,6 +65,7 @@ private:
     std::vector<SrsUdpMuxListener*> listeners_;
     SrsQuicTlsServerContext* quic_tls_server_ctx_;
     SrsQuicToken* quic_token_;
+    ISrsQuicConnectionHandler* connection_handler_;
 public:
     SrsQuicServer();
     virtual ~SrsQuicServer();

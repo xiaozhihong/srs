@@ -42,6 +42,7 @@
 #include <srs_app_conn.hpp>
 #include <srs_app_rtc_conn.hpp>
 #include <srs_app_quic_conn.hpp>
+#include <srs_app_quic_server.hpp>
 
 #include <string>
 #include <map>
@@ -54,7 +55,7 @@ class SrsQuicConnection;
 class SrsRtcForwardPublisher;
 class SrsRtcForwardConsumer;
 
-class SrsRtcForward : public ISrsRtcHijacker, public ISrsQuicStreamHandler
+class SrsRtcForward : public ISrsRtcHijacker, public ISrsQuicConnectionHandler
 {
 public:
     SrsRtcForward();
@@ -70,9 +71,8 @@ public:
     virtual srs_error_t on_start_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
     virtual void on_stop_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
     virtual srs_error_t on_start_consume(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req, SrsRtcConsumer* consumer);
-// Interface for ISrsQuicStreamHandler
-public:
-    virtual srs_error_t on_new_stream(SrsQuicStream* stream);
+// Interface for ISrsQuicConnectionHandler
+    virtual srs_error_t on_new_connection(SrsQuicConnection* quic_conn);
 };
 
 // TODO: FIXME: rename it.
@@ -96,11 +96,27 @@ private:
 
 // TODO: FIXME: rename it.
 // Process pull rtc stream requet, and send rtc stream over quic.
-class SrsRtcForwardConsumer : virtual public ISrsCoroutineHandler
+class SrsRtcForwardConsumer : public ISrsQuicStreamHandler
 {
 public:
-    SrsRtcForwardConsumer(SrsQuicStream* stream);
+    SrsRtcForwardConsumer(SrsQuicConnection* quic_conn);
     ~SrsRtcForwardConsumer();
+public:
+    srs_error_t start();
+// Interface for SrsQuicStream
+public:
+    virtual srs_error_t on_new_stream(int64_t stream_id);
+public:
+    SrsQuicConnection* quic_conn_;
+};
+
+// TODO: FIXME: rename it.
+// Process pull rtc stream requet, and send rtc stream over quic.
+class SrsRtcForwardConsumerThread : virtual public ISrsCoroutineHandler
+{
+public:
+    SrsRtcForwardConsumerThread(SrsRtcForwardConsumer* consumer, int64_t stream_id);
+    ~SrsRtcForwardConsumerThread();
 public:
     srs_error_t start();
     virtual srs_error_t cycle();
@@ -112,8 +128,10 @@ private:
     srs_error_t do_request_keyframe();
     srs_error_t rtc_forward();
 private:
+    SrsRtcForwardConsumer* consumer_;
+    SrsQuicConnection* quic_conn_;
     SrsRequest* req_;
-    SrsQuicStream* stream_;
+    int64_t stream_id_;
     SrsSTCoroutine* trd_;
 };
 

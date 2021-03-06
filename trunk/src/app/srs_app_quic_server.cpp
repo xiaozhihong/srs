@@ -90,6 +90,9 @@ SrsQuicServer::SrsQuicServer()
 {
     timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_SECONDS);
 		memset(&listen_sa_, 0, sizeof(listen_sa_));
+
+    // TODO: FIXME: set handler by listen type.
+    connection_handler_ = _srs_rtc_forward;
 }
 
 SrsQuicServer::~SrsQuicServer()
@@ -326,8 +329,6 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
 
     SrsContextId cid = _srs_context->get_id();
     SrsQuicConnection* quic_conn = new SrsQuicConnection(this, cid);
-    // TODO: FIXME: set handler by listen type.
-    quic_conn->set_stream_handler(_srs_rtc_forward);
     if ((err = quic_conn->accept(skt, &hd)) != srs_success) {
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
@@ -336,6 +337,12 @@ srs_error_t SrsQuicServer::new_connection(SrsUdpMuxSocket* skt, SrsQuicConnectio
     srs_trace("add new quic connection=%s", quic_conn_id_dump(conn_id).c_str());
     _srs_quic_manager->add_with_name(conn_id, quic_conn);
     *p_conn = quic_conn;
+
+    if (connection_handler_) {
+        if ((err = connection_handler_->on_new_connection(quic_conn)) != srs_success) {
+            return srs_error_wrap(err, "handler new connection failed");
+        }
+    }
 
     return err;
 }

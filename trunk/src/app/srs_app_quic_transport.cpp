@@ -176,7 +176,6 @@ void SrsQuicStreamBuffer::consumed(const size_t size)
 SrsQuicStream::SrsQuicStream(int64_t stream_id, SrsQuicTransport* transport)
     : stream_id_(stream_id)
     , quic_transport_(transport)
-    , last_err_(SrsQuicErrorSuccess)
 {
     ready_to_read_ = srs_cond_new();
     ready_to_write_ = srs_cond_new();
@@ -190,14 +189,6 @@ SrsQuicStream::~SrsQuicStream()
 
 int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
 {
-    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
-        if (last_err_ == SrsQuicErrorEOF) {
-            return 0;
-        }
-        return -1;
-    }
-    // TODO: FIXME: quic packet is received same as we send?
-
     // Split data into packet because UDP have max packet size.
     int offset = 0;
     int max_packet_size = NGTCP2_MAX_PKTLEN_IPV4;
@@ -225,13 +216,6 @@ int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
 // TODO: FIXME: this function like readmsg more?
 int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
 {
-    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
-        if (last_err_ == SrsQuicErrorEOF) {
-            return 0;
-        }
-        return -1;
-    }
-
     // TODO: FIXME: check buf and buf_size.
     if (! read_queue_.empty()) {
         string& data = read_queue_.front();
@@ -242,20 +226,12 @@ int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
     }
 
     if (srs_cond_timedwait(ready_to_read_, timeout) != 0) {
-        set_last_error(SrsQuicErrorTimeout);
-        return -1;
-    }
-
-    // TODO: FIXME: rewrite this function make it simplify.
-    if (quic_transport_ == NULL || last_err_ != SrsQuicErrorSuccess) {
-        if (last_err_ == SrsQuicErrorEOF) {
-            return 0;
-        }
+        quic_transport_->set_last_error(SrsQuicErrorTimeout);
         return -1;
     }
 
     if (read_queue_.empty()) {
-        set_last_error(SrsQuicErrorIO);
+        quic_transport_->set_last_error(SrsQuicErrorIO);
         return -1;
     }
 
@@ -286,7 +262,6 @@ void SrsQuicStream::on_close(SrsQuicTransport* transport)
     srs_assert(transport == quic_transport_);
 
     quic_transport_ = NULL;
-    set_last_error(SrsQuicErrorBadStream);
 
     // Notify st-thread which waiting read result.
     srs_cond_signal(ready_to_read_);
@@ -567,7 +542,7 @@ int SrsQuicTransport::on_stream_open(int64_t stream_id)
     streams_.insert(make_pair(stream_id, new_stream));
 
     if (stream_handler_) {
-        stream_handler_->on_new_stream(new_stream);
+        stream_handler_->on_new_stream(stream_id);
     }
 
     return 0;
@@ -577,18 +552,14 @@ int SrsQuicTransport::on_stream_close(int64_t stream_id, uint64_t app_error_code
 {
     srs_trace("stream %ld close, app_error_code=%lu", stream_id, app_error_code);
 
-    if (stream_handler_) {
-        map<int64_t, SrsQuicStream*>::iterator iter = streams_.find(stream_id);
-        if (iter == streams_.end()) {
-            return 0;
-        }
-
-        SrsQuicStream* stream = iter->second;
-        // We never free stream in SrsQuicTransport class, the owner of SrsQuicStream
-        // must manage life cycle of it.
-        stream->on_close(this);
-        streams_.erase(stream_id);
+    map<int64_t, SrsQuicStream*>::iterator iter = streams_.find(stream_id);
+    if (iter == streams_.end()) {
+        return 0;
     }
+
+    SrsQuicStream* stream = iter->second;
+    stream->on_close(this);
+    streams_.erase(stream_id);
 
     return 0;
 }
@@ -807,10 +778,9 @@ int SrsQuicTransport::send_packet(ngtcp2_path* path, uint8_t* data, const int si
                       path->remote.addrlen, SRS_UTIME_NO_TIMEOUT);
 }
 
-srs_error_t SrsQuicTransport::open_stream(int64_t* stream_id, SrsQuicStream** stream)
+srs_error_t SrsQuicTransport::open_stream(int64_t* stream_id)
 {
     srs_error_t err = srs_success;
-    *stream = NULL;
 
     // We can't determine which stream_id to open, it's alloc by libngtcp2.
     int ret = ngtcp2_conn_open_bidi_stream(conn_, stream_id, this);
@@ -826,7 +796,6 @@ srs_error_t SrsQuicTransport::open_stream(int64_t* stream_id, SrsQuicStream** st
 
     SrsQuicStream* new_stream = new SrsQuicStream(*stream_id, this);
     streams_.insert(make_pair(*stream_id, new_stream));
-    *stream = new_stream;
 
     return err;
 }
@@ -865,4 +834,33 @@ srs_error_t SrsQuicTransport::push_stream_data(int64_t stream_id, const uint8_t*
     stream_send_queue_.push_back(stream_buffer);
 
     return err;
+}
+
+int SrsQuicTransport::write(int64_t stream_id, const uint8_t* buf, size_t size, srs_utime_t timeout)
+{
+    clear_last_error();
+
+    map<int64_t, SrsQuicStream*>::iterator iter = streams_.find(stream_id);
+    if (iter == streams_.end()) {
+        set_last_error(SrsQuicErrorBadStream);
+        return -1;
+    }
+
+    SrsQuicStream* stream = iter->second;
+
+    return stream->write(buf, size, timeout);
+}
+
+int SrsQuicTransport::read(int64_t stream_id, uint8_t* buf, size_t buf_size, srs_utime_t timeout)
+{
+    clear_last_error();
+
+    map<int64_t, SrsQuicStream*>::iterator iter = streams_.find(stream_id);
+    if (iter == streams_.end()) {
+        set_last_error(SrsQuicErrorBadStream);
+        return -1;
+    }
+
+    SrsQuicStream* stream = iter->second;
+    return stream->read(buf, buf_size, timeout);
 }
