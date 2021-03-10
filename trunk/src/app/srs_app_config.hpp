@@ -538,6 +538,14 @@ public:
     virtual std::string get_rtc_server_black_hole_addr();
 private:
     virtual int get_rtc_server_reuseport2();
+// rtc server quic section
+private:
+    SrsConfDirective* get_rtc_server_quic();
+public:
+    virtual bool get_rtc_server_quic_enabled();
+    virtual std::string get_rtc_server_quic_listen();
+    virtual std::string get_rtc_server_quic_ssl_key();
+    virtual std::string get_rtc_server_quic_ssl_cert();
 
 public:
     SrsConfDirective* get_rtc(std::string vhost);
@@ -551,15 +559,6 @@ public:
     int get_rtc_drop_for_pt(std::string vhost);
     bool get_rtc_nack_enabled(std::string vhost);
     bool get_rtc_twcc_enabled(std::string vhost);
-
-// quic section
-public:
-    virtual bool get_quic_server_enabled();
-    virtual bool get_quic_server_enabled(SrsConfDirective* conf);
-    virtual int get_quic_server_listen();
-    virtual int get_quic_server_reuseport();
-    virtual std::string get_quic_server_tls_key();
-    virtual std::string get_quic_server_tls_cert();
 
 // vhost specified section
 public:
@@ -1033,6 +1032,14 @@ public:
     virtual std::string get_https_api_listen();
     virtual std::string get_https_api_ssl_key();
     virtual std::string get_https_api_ssl_cert();
+// http api quic section
+private:
+    SrsConfDirective* get_http_api_quic();
+public:
+    virtual bool get_http_api_quic_enabled();
+    virtual std::string get_http_api_quic_listen();
+    virtual std::string get_http_api_quic_ssl_key();
+    virtual std::string get_http_api_quic_ssl_cert();
 // http stream section
 private:
     // Whether http stream enabled.
@@ -1055,6 +1062,14 @@ public:
     virtual std::string get_https_stream_listen();
     virtual std::string get_https_stream_ssl_key();
     virtual std::string get_https_stream_ssl_cert();
+// http stream quic section
+private:
+    SrsConfDirective* get_http_stream_quic();
+public:
+    virtual bool get_http_stream_quic_enabled();
+    virtual std::string get_http_stream_quic_listen();
+    virtual std::string get_http_stream_quic_ssl_key();
+    virtual std::string get_http_stream_quic_ssl_cert();
 public:
     // Get whether vhost enabled http stream
     virtual bool get_vhost_http_enabled(std::string vhost);

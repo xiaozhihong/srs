@@ -49,7 +49,7 @@
     </div>
 
     <label></label>
-    <video id="rtc_media_player" width="320" autoplay muted></video>
+    <video id="rtc_media_player" width="1280" autoplay muted></video>
 
     <label></label>
     SessionID: <span id='sessionid'></span>
@@ -97,7 +97,7 @@
                 self.pc.addTransceiver("video", {direction: "sendonly"});
 
                 var stream = await navigator.mediaDevices.getUserMedia(
-                    {audio: true, video: {height: {max: 320}}}
+                    {audio: true, video: {height: {max: 720}}}
                 );
                 // @see https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/addStream#Migrating_to_addTrack
                 stream.getTracks().forEach(function (track) {
@@ -128,8 +128,15 @@
                         reject(reason);
                     });
                 });
-                await self.pc.setRemoteDescription(
-                    new RTCSessionDescription({type: 'answer', sdp: session.sdp})
+				var arr = session.sdp.split('\r\n');
+				arr.forEach((str, i) => {
+				    if (/^a=fmtp:\d*/.test(str)) {
+				        arr[i] = str + ';x-google-max-bitrate=10000;x-google-min-bitrate=6000;x-google-start-bitrate=6000';
+				    } else if (/^a=mid:(1|video)/.test(str)) {
+				        arr[i] += '\r\nb=AS:10000';
+				    }
+				});
+                await self.pc.setRemoteDescription({type: 'answer', sdp: arr.join('\r\n')}
                 );
                 session.simulator = conf.schema + '//' + conf.urlObject.server + ':' + conf.port + '/rtc/v1/nack/';
 

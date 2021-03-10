@@ -21,8 +21,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef SRS_APP_RTC_FORWARD_HPP
-#define SRS_APP_RTC_FORWARD_HPP
+#ifndef SRS_APP_RTC_FORWARD_QUIC_CONN_HPP
+#define SRS_APP_RTC_FORWARD_QUIC_CONN_HPP
 
 #include <srs_core.hpp>
 #include <srs_app_listener.hpp>
@@ -41,30 +41,56 @@
 #include <srs_service_conn.hpp>
 #include <srs_app_conn.hpp>
 #include <srs_app_rtc_conn.hpp>
+#include <srs_app_quic_conn.hpp>
+#include <srs_app_quic_server.hpp>
 
 #include <string>
 #include <map>
 #include <vector>
 #include <sys/socket.h>
 
-class SrsRtcForward : public ISrsRtcHijacker
+class SrsJsonObject;
+class SrsQuicConnection;
+class SrsRtcForwardQuicStreamThread;
+
+// TODO: FIXME: rename it.
+// Process pull rtc stream requet, and send rtc stream over quic.
+class SrsRtcForwardQuicConn : public ISrsQuicStreamHandler
 {
 public:
-    SrsRtcForward();
-    virtual ~SrsRtcForward();
-// Interface for ISrsRtcHijacker
+    SrsRtcForwardQuicConn(SrsQuicConnection* quic_conn);
+    ~SrsRtcForwardQuicConn();
+// Interface for SrsQuicStream
 public:
-    virtual srs_error_t initialize();
-    virtual srs_error_t on_create_publish(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req);
-    virtual srs_error_t on_start_publish(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req);
-    virtual void on_stop_publish(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req);
-    virtual srs_error_t on_rtp_packet(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req, SrsRtpPacket2* pkt);
-    virtual srs_error_t on_before_play(SrsRtcConnection* session, SrsRequest* req);
-    virtual srs_error_t on_start_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
-    virtual void on_stop_play(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req);
-    virtual srs_error_t on_start_consume(SrsRtcConnection* session, SrsRtcPlayStream* player, SrsRequest* req, SrsRtcConsumer* consumer);
+    virtual srs_error_t on_new_stream(int64_t stream_id);
+public:
+    SrsQuicConnection* quic_conn_;
+    std::map<int64_t, SrsRtcForwardQuicStreamThread*> steram_trds_;
 };
 
-extern SrsRtcForward* _srs_rtc_forward;
+// TODO: FIXME: rename it.
+// Process pull rtc stream requet, and send rtc stream over quic.
+class SrsRtcForwardQuicStreamThread : virtual public ISrsCoroutineHandler
+{
+public:
+    SrsRtcForwardQuicStreamThread(SrsRtcForwardQuicConn* consumer, int64_t stream_id);
+    ~SrsRtcForwardQuicStreamThread();
+public:
+    srs_error_t start();
+    virtual srs_error_t cycle();
+private:
+    srs_error_t process_req();
+    srs_error_t process_req_json(const uint8_t* data, size_t size);
+    srs_error_t process_rtc_forward_req(SrsJsonObject* json_obj);
+    srs_error_t process_request_keyframe_req(SrsJsonObject* json_obj);
+    srs_error_t do_request_keyframe();
+    srs_error_t rtc_forward();
+private:
+    SrsRtcForwardQuicConn* consumer_;
+    SrsQuicConnection* quic_conn_;
+    SrsRequest* req_;
+    int64_t stream_id_;
+    SrsSTCoroutine* trd_;
+};
 
 #endif

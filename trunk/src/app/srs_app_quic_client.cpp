@@ -62,18 +62,8 @@ SrsQuicClient::~SrsQuicClient()
     srs_close_stfd(udp_fd_);
     srs_freep(trd_);
 
-    srs_freep(tls_context_);
-    srs_freep(quic_token_);
-
     if (connection_cond_) {
         srs_cond_destroy(connection_cond_);
-    }
-
-    for (std::map<int64_t, srs_cond_t>::iterator iter = stream_id_cond_.begin(); 
-            iter != stream_id_cond_.end(); ++iter) {
-        if (iter->second) {
-            srs_cond_destroy(iter->second);
-        }
     }
 }
 
@@ -179,6 +169,11 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
         return srs_error_wrap(err, "init quic tls client ctx failed");
     }
 
+    tls_session_ = new SrsQuicTlsClientSession();
+    if ((err = tls_session_->init(tls_context_, this)) != srs_success) {
+        return srs_error_wrap(err, "tls session init failed");
+    }
+
     quic_token_ = new SrsQuicToken();
     if ((err = quic_token_->init()) != srs_success) {
         return srs_error_wrap(err, "init quic token failed");
@@ -194,11 +189,6 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
 
     if (ret != 0) {
         return srs_error_new(ERROR_QUIC_CONN, "init quic client failed, err=%s", ngtcp2_strerror(ret));
-    }
-
-    tls_session_ = new SrsQuicTlsClientSession();
-    if ((err = tls_session_->init(tls_context_, this)) != srs_success) {
-        return srs_error_wrap(err, "tls session init failed");
     }
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());

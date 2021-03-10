@@ -41,19 +41,19 @@ using namespace std;
 #include <srs_protocol_utility.hpp>
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_util.hpp>
+#include <srs_app_quic_io_loop.hpp>
 
 const int kServerCidLen = 18;
 const int kClientCidLen = 18;
 
-SrsQuicConnection::SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid)
+SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContextId& cid)
     : SrsQuicTransport()
 {
     disposing_ = false;
-
-    _srs_quic_manager->subscribe(this);
+    _quic_io->subscribe(this);
 
     cid_ = cid;
-    server_ = s;
+    listener_ = listener;
     timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
 
     stream_handler_ = NULL;
@@ -61,8 +61,7 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid)
 
 SrsQuicConnection::~SrsQuicConnection()
 {
-    _srs_quic_manager->unsubscribe(this);
-
+    _quic_io->unsubscribe(this);
     srs_freep(timer_);
 
     // TODO: FIXME: stream handler need to free?
@@ -73,8 +72,8 @@ srs_error_t SrsQuicConnection::accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
 {
     udp_fd_ = skt->stfd();
 
-    local_addr_ = *server_->local_addr();
-    local_addr_len_ = server_->local_addrlen();
+    local_addr_ = *listener_->local_addr();
+    local_addr_len_ = listener_->local_addrlen();
 
     remote_addr_ = *skt->peer_addr();
     remote_addr_len_ = skt->peer_addrlen();
@@ -90,7 +89,7 @@ srs_error_t SrsQuicConnection::accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
                 &scid_, &dcid_, hd->version, hd->token.base, hd->token.len);
 }
 
-srs_error_t SrsQuicConnection::on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* data, int size)
+srs_error_t SrsQuicConnection::on_udp_packet(SrsUdpMuxSocket* skt, const uint8_t* data, int size)
 {
     remote_addr_ = *skt->peer_addr();
     remote_addr_len_ = skt->peer_addrlen();
@@ -136,12 +135,12 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
 
 uint8_t* SrsQuicConnection::get_static_secret()
 {
-    return server_->get_quic_token()->get_static_secret();
+    return quic_token_->get_static_secret();
 }
 
 size_t SrsQuicConnection::get_static_secret_len()
 {
-    return server_->get_quic_token()->get_static_secret_len();
+    return quic_token_->get_static_secret_len();
 }
 
 int SrsQuicConnection::handshake_completed()
@@ -150,8 +149,7 @@ int SrsQuicConnection::handshake_completed()
 
     uint8_t token[kMaxTokenLen];
     size_t tokenlen = sizeof(token);
-    if (server_->get_quic_token()->generate_token(token, tokenlen, 
-            reinterpret_cast<const sockaddr*>(&remote_addr_)) != 0) {
+    if (quic_token_->generate_token(token, tokenlen, reinterpret_cast<const sockaddr*>(&remote_addr_)) != 0) {
         return 0;
     }
 
@@ -181,10 +179,24 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
         return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed, err=%s", ngtcp2_strerror(ret));
     }
 
+   	tls_context_ = new SrsQuicTlsServerContext();
+    // TODO: FIXME: get tls key/cert.
+    string tls_key = listener_->get_key();
+    string tls_cert = listener_->get_cert();
+    if ((err = tls_context_->init(tls_key, tls_cert)) != srs_success) {
+        return srs_error_wrap(err, "init quic tls server ctx failed");
+    }
+
     tls_session_ = new SrsQuicTlsServerSession();
-    if ((err = tls_session_->init(server_->get_quic_tls_server_ctx(), this)) != srs_success) {
+    if ((err = tls_session_->init(tls_context_, this)) != srs_success) {
         return srs_error_wrap(err, "tls session init failed");
     }
+
+    quic_token_ = new SrsQuicToken();
+    if ((err = quic_token_->init()) != srs_success) {
+        return srs_error_wrap(err, "init quic token failed");
+    } 
+
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
 

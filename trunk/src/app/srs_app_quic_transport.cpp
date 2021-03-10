@@ -313,7 +313,9 @@ SrsQuicTransport::SrsQuicTransport()
 SrsQuicTransport::~SrsQuicTransport()
 {
     srs_freep(timer_);
+    srs_freep(tls_context_);
     srs_freep(tls_session_);
+    srs_freep(quic_token_);
 
     if (conn_) {
         ngtcp2_conn_del(conn_);

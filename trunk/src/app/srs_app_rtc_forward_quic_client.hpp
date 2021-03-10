@@ -21,62 +21,51 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef SRS_APP_QUIC_CLIENT_HPP
-#define SRS_APP_QUIC_CLIENT_HPP
+#ifndef SRS_APP_RTC_FORWARD_QUIC_CLIENT_HPP
+#define SRS_APP_RTC_FORWARD_QUIC_CLIENT_HPP
 
 #include <srs_core.hpp>
 #include <srs_app_listener.hpp>
-#include <srs_app_hourglass.hpp>
 #include <srs_service_st.hpp>
 #include <srs_kernel_utility.hpp>
+#include <srs_rtmp_stack.hpp>
+#include <srs_app_hybrid.hpp>
+#include <srs_app_hourglass.hpp>
+#include <srs_app_rtc_sdp.hpp>
 #include <srs_app_reload.hpp>
+#include <srs_kernel_rtc_rtp.hpp>
+#include <srs_kernel_rtc_rtcp.hpp>
+#include <srs_app_rtc_queue.hpp>
+#include <srs_app_rtc_source.hpp>
+#include <srs_app_rtc_dtls.hpp>
 #include <srs_service_conn.hpp>
 #include <srs_app_conn.hpp>
-#include <srs_app_quic_transport.hpp>
+#include <srs_app_rtc_conn.hpp>
+#include <srs_app_quic_conn.hpp>
+#include <srs_app_quic_server.hpp>
 
-#include <deque>
 #include <string>
 #include <map>
 #include <vector>
 #include <sys/socket.h>
 
-#include <ngtcp2/ngtcp2.h>
-
-class SrsQuicTlsContext;
-class SrsQuicTlsSession;
-class SrsQuicToken;
-
-class SrsQuicClient : public SrsQuicTransport, virtual public ISrsCoroutineHandler
+// TODO: FIXME: rename it.
+// Pull rtc stream from remote, and publish rtc stream in local.
+class SrsRtcForwardQuicClient : virtual public ISrsCoroutineHandler, public ISrsRtcPublishStream
 {
 public:
-    SrsQuicClient();
-  	~SrsQuicClient();
-private:
-    srs_error_t create_udp_socket();
-    srs_error_t create_udp_io_thread();
-// Interface for SrsQuicTransport
-private:
-    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
-    virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
-        sockaddr* remote_addr, const socklen_t remote_addrlen,
-        ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
-        uint8_t* token, const size_t tokenlen);
-
-	virtual uint8_t* get_static_secret();
-    virtual size_t get_static_secret_len();
-
-	virtual int handshake_completed();
-
-// SrsQuicClient API
+    SrsRtcForwardQuicClient(SrsRequest* req);
+    ~SrsRtcForwardQuicClient();
 public:
-    srs_error_t connect(const std::string& ip, uint16_t port);
-private:
-    // Quic client udp packet io recv thread.
+    srs_error_t start();
+public:
+    virtual void request_keyframe(uint32_t);
     virtual srs_error_t cycle();
-
 private:
+    SrsRequest* req_;
     SrsSTCoroutine* trd_;
-    srs_cond_t connection_cond_;
+    srs_cond_t cond_waiting_sdp_;
+    bool request_keyframe_;
 };
 
 #endif

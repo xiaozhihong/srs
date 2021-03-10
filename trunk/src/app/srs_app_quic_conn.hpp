@@ -42,7 +42,7 @@
 
 #include <ngtcp2/ngtcp2.h>
 
-class SrsQuicServer;
+class SrsQuicListener;
 class SrsUdpMuxSocket;
 class SrsQuicTlsServerSession;
 class SrsQuicConnection;
@@ -52,11 +52,11 @@ class SrsQuicConnection : public SrsQuicTransport, virtual public ISrsResource
     , virtual public ISrsDisposingHandler
 {
 public:
-    SrsQuicConnection(SrsQuicServer* s, const SrsContextId& cid);
+    SrsQuicConnection(SrsQuicListener* s, const SrsContextId& cid);
   	~SrsQuicConnection();
 public:
     srs_error_t accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd);
-    srs_error_t on_udp_data(SrsUdpMuxSocket* skt, const uint8_t* data, int size);
+    srs_error_t on_udp_packet(SrsUdpMuxSocket* skt, const uint8_t* data, int size);
 // Interface SrsQuicTransport
 private:
     virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
@@ -87,7 +87,7 @@ public:
     bool disposing_;
 private:
     SrsContextId cid_;
-    SrsQuicServer* server_;
+    SrsQuicListener* listener_;
 };
 
 #endif

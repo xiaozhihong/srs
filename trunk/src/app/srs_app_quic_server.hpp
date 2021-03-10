@@ -31,6 +31,7 @@
 #include <srs_app_reload.hpp>
 #include <srs_app_hourglass.hpp>
 #include <srs_app_hybrid.hpp>
+#include <srs_app_quic_io_loop.hpp>
 
 #include <string>
 
@@ -39,54 +40,29 @@ class SrsQuicConnection;
 class SrsResourceManager;
 class SrsQuicTlsServerContext;
 class SrsQuicToken;
+class SrsQuicListener;
 
-enum SrsQuicListenerType
+// The QUIC server instance, manage QUIC connections.
+class SrsQuicServer : public ISrsQuicHandler
 {
-	// RTC server forward.
-    SrsQuicListenerRtcForward = 0,
-};
-
-class ISrsQuicConnectionHandler
-{
-public:
-    ISrsQuicConnectionHandler() {}
-    ~ISrsQuicConnectionHandler() {}
-public:
-    virtual srs_error_t on_new_connection(SrsQuicConnection* conn) = 0;
-};
-
-// The QUIC server instance, listen UDP port, handle UDP packet, manage QUIC connections.
-class SrsQuicServer : virtual public ISrsUdpMuxHandler, virtual public ISrsHourGlass
-{
-private:
-    SrsQuicListenerType listen_type_;
-    SrsHourGlass* timer_;
-    struct sockaddr_in listen_sa_;
-    std::vector<SrsUdpMuxListener*> listeners_;
-    SrsQuicTlsServerContext* quic_tls_server_ctx_;
-    SrsQuicToken* quic_token_;
-    ISrsQuicConnectionHandler* connection_handler_;
 public:
     SrsQuicServer();
     virtual ~SrsQuicServer();
+// Interface for ISrsQuicHandler
 public:
-    sockaddr_in* local_addr() { return &listen_sa_; }
-    socklen_t local_addrlen() { return sizeof(listen_sa_); }
-    SrsQuicToken* get_quic_token() { return quic_token_; }
-    SrsQuicTlsServerContext* get_quic_tls_server_ctx() { return quic_tls_server_ctx_; }
+    virtual srs_error_t on_quic_client(SrsQuicConnection* conn, SrsQuicListenerType type);
 public:
-    virtual srs_error_t initialize();
+    srs_error_t initialize();
 public:
     // TODO: FIXME: Support gracefully quit.
     // TODO: FIXME: Support reload.
-    srs_error_t listen_udp();
-    virtual srs_error_t on_udp_packet(SrsUdpMuxSocket* skt);
-public:
-    virtual srs_error_t notify(int type, srs_utime_t interval, srs_utime_t tick);
+    srs_error_t listen();
 private:
-    srs_error_t new_connection(SrsUdpMuxSocket* skt, SrsQuicConnection** p_conn);
-    srs_error_t send_version_negotiation(SrsUdpMuxSocket* skt, const uint8_t version, 
-        const uint8_t* dcid, const size_t dcid_len, const uint8_t* scid, const size_t scid_len);
+    srs_error_t listen_http_api_quic();
+    srs_error_t listen_http_stream_quic();
+    srs_error_t listen_rtc_server_quic();
+private:
+    std::vector<SrsQuicListener*> listeners_;
 };
 
 // The QUIC server adapter.
@@ -103,6 +79,6 @@ public:
     virtual void stop();
 };
 
-extern SrsResourceManager* _srs_quic_manager;
+extern SrsResourceManager* _srs_quic_conn_manager;
 
 #endif

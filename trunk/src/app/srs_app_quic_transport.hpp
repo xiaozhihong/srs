@@ -41,7 +41,9 @@
 
 #include <ngtcp2/ngtcp2.h>
 
+class SrsQuicTlsContext;
 class SrsQuicTlsSession;
+class SrsQuicToken;
 class SrsQuicStream;
 class SrsQuicTransport;;
 
@@ -214,7 +216,9 @@ protected:
         size_t acked_offset;
     } crypto_buffer_[3];
 
+    SrsQuicTlsContext* tls_context_;
     SrsQuicTlsSession* tls_session_;
+    SrsQuicToken* quic_token_;
 protected:
     std::string connection_close_packet_;
     std::deque<SrsQuicStreamBuffer> stream_send_queue_;

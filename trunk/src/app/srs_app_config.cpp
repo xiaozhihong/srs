@@ -3581,7 +3581,6 @@ srs_error_t SrsConfig::check_normal_config()
             && n != "ff_log_level" && n != "grace_final_wait" && n != "force_grace_quit"
             && n != "grace_start_wait" && n != "empty_ip_ok" && n != "disable_daemon_for_docker"
             && n != "inotify_auto_reload" && n != "auto_reload_for_docker" && n != "tcmalloc_release_rate"
-            && n != "quic_server"
             ) {
             return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal directive %s", n.c_str());
         }
@@ -3591,7 +3590,7 @@ srs_error_t SrsConfig::check_normal_config()
         for (int i = 0; conf && i < (int)conf->directives.size(); i++) {
             SrsConfDirective* obj = conf->at(i);
             string n = obj->name;
-            if (n != "enabled" && n != "listen" && n != "crossdomain" && n != "raw_api" && n != "https") {
+            if (n != "enabled" && n != "listen" && n != "crossdomain" && n != "raw_api" && n != "https" && n != "quic") {
                 return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal http_api.%s", n.c_str());
             }
             
@@ -3603,14 +3602,33 @@ srs_error_t SrsConfig::check_normal_config()
                     }
                 }
             }
+
+            if (n == "quic" || n == "https") {
+                for (int j = 0; j < (int)obj->directives.size(); j++) {
+                    string m = obj->at(j)->name;
+                    if (m != "enabled" && m != "listen" && m != "key" && m != "cert") {
+                        return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal http_api.quic/https.%s", m.c_str());
+                    }
+                }
+            }
         }
     }
     if (true) {
         SrsConfDirective* conf = root->get("http_server");
         for (int i = 0; conf && i < (int)conf->directives.size(); i++) {
             string n = conf->at(i)->name;
-            if (n != "enabled" && n != "listen" && n != "dir" && n != "crossdomain" && n != "https") {
+            if (n != "enabled" && n != "listen" && n != "dir" && n != "crossdomain" && n != "https" && n != "quic") {
                 return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal http_stream.%s", n.c_str());
+            }
+
+            if (n == "quic" || n == "https") {
+                SrsConfDirective* obj = conf->at(i);
+                for (int j = 0; j < (int)obj->directives.size(); j++) {
+                    string m = obj->at(j)->name;
+                    if (m != "enabled" && m != "listen" && m != "key" && m != "cert") {
+                        return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal http_api.quic/https.%s", m.c_str());
+                    }
+                }
             }
         }
     }
@@ -3652,17 +3670,8 @@ srs_error_t SrsConfig::check_normal_config()
             string n = conf->at(i)->name;
             if (n != "enabled" && n != "listen" && n != "dir" && n != "candidate" && n != "ecdsa"
                 && n != "encrypt" && n != "reuseport" && n != "merge_nalus" && n != "perf_stat" && n != "black_hole"
-                && n != "ip_family") {
+                && n != "ip_family" && n != "quic") {
                 return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal rtc_server.%s", n.c_str());
-            }
-        }
-    }
-    if (true) {
-        SrsConfDirective* conf = root->get("quic_server");
-        for (int i = 0; conf && i < (int)conf->directives.size(); i++) {
-            string n = conf->at(i)->name;
-            if (n != "enabled" && n != "listen" && n != "tls_key" && n != "tls_cert") {
-                return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal quic_server.%s", n.c_str());
             }
         }
     }
@@ -4878,6 +4887,84 @@ int SrsConfig::get_rtc_server_reuseport2()
     return ::atoi(conf->arg0().c_str());
 }
 
+SrsConfDirective* SrsConfig::get_rtc_server_quic()
+{
+    SrsConfDirective* conf = root->get("rtc_server");
+    if (!conf) {
+        return NULL;
+    }
+
+    return conf->get("quic");
+}
+
+bool SrsConfig::get_rtc_server_quic_enabled()
+{
+    static bool DEFAULT = false;
+
+    SrsConfDirective* conf = get_rtc_server_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("enabled");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
+}
+
+string SrsConfig::get_rtc_server_quic_listen()
+{
+    static string DEFAULT = "3443";
+
+    SrsConfDirective* conf = get_rtc_server_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("listen");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_rtc_server_quic_ssl_key()
+{
+    static string DEFAULT = "./conf/server.key";
+
+    SrsConfDirective* conf = get_rtc_server_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("key");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_rtc_server_quic_ssl_cert()
+{
+    static string DEFAULT = "./conf/server.crt";
+
+    SrsConfDirective* conf = get_rtc_server_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("cert");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
 bool SrsConfig::get_rtc_server_merge_nalus()
 {
     static int DEFAULT = false;
@@ -5147,99 +5234,6 @@ bool SrsConfig::get_rtc_twcc_enabled(string vhost)
     }
 
     return SRS_CONF_PERFER_TRUE(conf->arg0());
-}
-
-bool SrsConfig::get_quic_server_enabled()
-{
-    SrsConfDirective* conf = root->get("quic_server");
-    return get_quic_server_enabled(conf);
-}
-
-bool SrsConfig::get_quic_server_enabled(SrsConfDirective* conf)
-{
-    static bool DEFAULT = false;
-
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("enabled");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return SRS_CONF_PERFER_FALSE(conf->arg0());
-}
-
-int SrsConfig::get_quic_server_reuseport()
-{
-    static int DEFAULT = 1;
-#if !defined(SO_REUSEPORT)
-    return DEFAULT;
-#endif
-
-    SrsConfDirective* conf = root->get("quic_server");
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("reuseport");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return ::atoi(conf->arg0().c_str());
-}
-
-int SrsConfig::get_quic_server_listen()
-{
-    static int DEFAULT = 8000;
-
-    SrsConfDirective* conf = root->get("quic_server");
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("listen");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return ::atoi(conf->arg0().c_str());
-}
-
-std::string SrsConfig::get_quic_server_tls_key()
-{
-    static std::string DEFAULT = "";
-
-    SrsConfDirective* conf = root->get("quic_server");
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("tls_key");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return conf->arg0();
-}
-
-std::string SrsConfig::get_quic_server_tls_cert()
-{
-    static std::string DEFAULT = "";
-
-    SrsConfDirective* conf = root->get("quic_server");
-    if (!conf) {
-        return DEFAULT;
-    }
-
-    conf = conf->get("tls_cert");
-    if (!conf || conf->arg0().empty()) {
-        return DEFAULT;
-    }
-
-    return conf->arg0();
 }
 
 SrsConfDirective* SrsConfig::get_vhost(string vhost, bool try_default_vhost)
@@ -7864,6 +7858,84 @@ string SrsConfig::get_https_api_ssl_cert()
     return conf->arg0();
 }
 
+SrsConfDirective* SrsConfig::get_http_api_quic()
+{
+    SrsConfDirective* conf = root->get("http_api");
+    if (!conf) {
+        return NULL;
+    }
+
+    return conf->get("quic");
+}
+
+bool SrsConfig::get_http_api_quic_enabled()
+{
+    static bool DEFAULT = false;
+
+    SrsConfDirective* conf = get_http_api_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("enabled");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
+}
+
+string SrsConfig::get_http_api_quic_listen()
+{
+    static string DEFAULT = "1443";
+
+    SrsConfDirective* conf = get_http_api_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("listen");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_http_api_quic_ssl_key()
+{
+    static string DEFAULT = "./conf/server.key";
+
+    SrsConfDirective* conf = get_http_api_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("key");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_http_api_quic_ssl_cert()
+{
+    static string DEFAULT = "./conf/server.crt";
+
+    SrsConfDirective* conf = get_http_api_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("cert");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
 bool SrsConfig::get_srt_enabled()
 {
     static bool DEFAULT = false;
@@ -8228,6 +8300,85 @@ string SrsConfig::get_https_stream_ssl_cert()
 
     return conf->arg0();
 }
+
+SrsConfDirective* SrsConfig::get_http_stream_quic()
+{
+    SrsConfDirective* conf = root->get("http_server");
+    if (!conf) {
+        return NULL;
+    }
+
+    return conf->get("quic");
+}
+
+bool SrsConfig::get_http_stream_quic_enabled()
+{
+    static bool DEFAULT = false;
+
+    SrsConfDirective* conf = get_http_stream_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("enabled");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return SRS_CONF_PERFER_FALSE(conf->arg0());
+}
+
+string SrsConfig::get_http_stream_quic_listen()
+{
+    static string DEFAULT = "2443";
+
+    SrsConfDirective* conf = get_http_stream_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("listen");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_http_stream_quic_ssl_key()
+{
+    static string DEFAULT = "./conf/server.key";
+
+    SrsConfDirective* conf = get_http_stream_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("key");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
+string SrsConfig::get_http_stream_quic_ssl_cert()
+{
+    static string DEFAULT = "./conf/server.crt";
+
+    SrsConfDirective* conf = get_http_stream_quic();
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    conf = conf->get("cert");
+    if (!conf) {
+        return DEFAULT;
+    }
+
+    return conf->arg0();
+}
+
 
 bool SrsConfig::get_vhost_http_enabled(string vhost)
 {
