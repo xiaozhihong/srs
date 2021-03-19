@@ -35,6 +35,7 @@
 #include <string>
 
 class SrsQuicConnection;
+class ISrsResource;
 class SrsResourceManager;
 
 enum SrsQuicListenerType
@@ -77,15 +78,16 @@ private:
 };
 
 // The QUIC server instance, listen UDP port, handle UDP packet, manage QUIC connections.
-class SrsQuicConnectionManager
+class SrsQuicIoLoop
 {
 public:
-    SrsQuicConnectionManager();
-    virtual ~SrsQuicConnectionManager();
+    SrsQuicIoLoop();
+    virtual ~SrsQuicIoLoop();
 public:
     virtual srs_error_t initialize();
     void subscribe(SrsQuicConnection* quic_conn);
     void unsubscribe(SrsQuicConnection* quic_conn);
+    void remove(ISrsResource* resource);
 public:
     srs_error_t on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* listener);
 private:
@@ -96,6 +98,6 @@ private:
     SrsResourceManager* quic_conn_map_;
 };
 
-extern SrsQuicConnectionManager* _quic_io;
+extern SrsQuicIoLoop* _quic_io_loop;
 
 #endif

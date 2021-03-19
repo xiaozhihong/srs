@@ -54,23 +54,6 @@ enum SrsQuicStreamDirection
     QuicStreamSendRecv = 3,
 };
 
-// Quic stream buffer, use to store packet of stream to send.
-class SrsQuicStreamBuffer
-{
-public:
-    SrsQuicStreamBuffer(int64_t stream_id, const uint8_t* data, const size_t size);
-    ~SrsQuicStreamBuffer();
-public:
-    bool empty() const;
-    uint8_t* data();
-    size_t size();
-    void consumed(const size_t size);
-    int64_t stream_id() const { return stream_id_; }
-private:
-    int64_t stream_id_;
-    std::string buffer_;
-};
-
 // Stream event handler for quic connection.
 class ISrsQuicStreamHandler
 {
@@ -88,6 +71,7 @@ enum SrsQuicError
     SrsQuicErrorIO = 2,
     SrsQuicErrorBadStream = 3,
     SrsQuicErrorEOF = 4,
+    SrsQuicErrorAgain = 5,
 };
 
 class SrsQuicStream
@@ -99,8 +83,9 @@ public:
 
 // API of SrsQuicStream
 public:
-    int write(const uint8_t* buf, size_t size, srs_utime_t timeout);
-    int read(uint8_t* buf, size_t buf_size, srs_utime_t timeout);
+    int write(const void* buf, int size, srs_utime_t timeout);
+    int read(void* buf, int buf_size, srs_utime_t timeout);
+    int read_fully(void* buf, int buf_size, srs_utime_t timeout);
 
     int64_t get_stream_id() const { return stream_id_; }
 private:
@@ -110,9 +95,9 @@ private:
     srs_error_t on_recv_from_quic_transport(const uint8_t* buf, size_t size);
 private:
     srs_cond_t ready_to_read_;
-    std::deque<std::string> read_queue_;
+    // TODO: FIXME: use ring buffer instead of it.
+    std::string read_buffer_;
     srs_cond_t ready_to_write_;
-    std::deque<std::string> write_queue_;
 
     int64_t stream_id_;
     // Quic transport this stream belong, when transport closed, the pointer changed to NULL,
@@ -145,13 +130,14 @@ public:
     std::string get_conn_id();
     void set_stream_handler(ISrsQuicStreamHandler* stream_handler);
     SrsQuicError get_last_error() const { return last_err_; }
+    int wait_writeable(srs_utime_t timeout);
 private:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
-    srs_error_t push_stream_data(int64_t stream_id, const uint8_t* data, size_t size);
+    int write_stream(const int64_t stream_id, const void* data, int len, srs_utime_t timeout);
 private:
-	srs_error_t update_rtt_timer();
-    srs_error_t on_timer_quic_rexmit();
+	srs_error_t update_quic_driver_timer();
+    srs_error_t on_timer_quic_driver();
 private:
     srs_error_t on_error();
     srs_error_t disconnect();
@@ -159,7 +145,7 @@ private:
 protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
 protected:
-    virtual srs_error_t io_write_streams();
+    virtual srs_error_t quic_transport_driver();
     srs_error_t send_connection_close();
     // Get static secret to generate quic token.
     virtual uint8_t* get_static_secret() = 0;
@@ -172,6 +158,7 @@ public:
     int on_application_tx_key();
     int write_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen);
     int acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen);
+    int acked_stream_data_offset(uint64_t offset, uint64_t datalen);
     void set_tls_alert(uint8_t alert);
 // Ngtcp2 callback function
 public:
@@ -189,8 +176,9 @@ public:
     // TODO: FIXME: add annotation.
     virtual srs_error_t open_stream(int64_t* stream_id);
     virtual srs_error_t close_stream(int64_t stream_id);
-    int write(int64_t stream_id, const uint8_t* buf, size_t size, srs_utime_t timeout);
-    int read(int64_t stream_id, uint8_t* buf, size_t buf_size, srs_utime_t timeout);
+    int write(int64_t stream_id, const void* buf, int size, srs_utime_t timeout);
+    int read(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
+    int read_fully(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
 
 protected:
     SrsHourGlass* timer_;
@@ -221,10 +209,11 @@ protected:
     SrsQuicToken* quic_token_;
 protected:
     std::string connection_close_packet_;
-    std::deque<SrsQuicStreamBuffer> stream_send_queue_;
     std::map<int64_t, SrsQuicStream*> streams_;
     ISrsQuicStreamHandler* stream_handler_;
     SrsQuicError last_err_;
+    int nb_waiting_write_;
+    srs_cond_t writeable_cond_;
 };
 
 #endif

@@ -42,7 +42,7 @@ using namespace std;
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_util.hpp>
 
-#define SRS_TICKID_QUIC_REXMIT 	  2
+#define SRS_TICKID_QUIC_DRIVER 	  1
 
 const int kServerCidLen = 18;
 const int kClientCidLen = 18;
@@ -77,7 +77,8 @@ static int cb_acked_crypto_offset(ngtcp2_conn *conn, ngtcp2_crypto_level crypto_
 static int cb_acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
     uint64_t offset, uint64_t datalen, void *user_data, void *stream_user_data) 
 {
-    return 0;
+    SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
+    return quic_transport->acked_stream_data_offset(offset, datalen);
 }
 
 static int cb_stream_open(ngtcp2_conn *conn, int64_t stream_id, void *user_data) 
@@ -115,17 +116,20 @@ static int cb_path_validation(ngtcp2_conn *conn, const ngtcp2_path *path,
 static int cb_stream_reset(ngtcp2_conn *conn, int64_t stream_id, uint64_t final_size,
     uint64_t app_error_code, void *user_data, void *stream_user_data) 
 {
+    srs_warn("quic unprocess function %s", __func__);
     return 0;
 }
 
 static int cb_extend_max_remote_streams_bidi(ngtcp2_conn *conn, uint64_t max_streams, void *user_data) 
 {
+    srs_warn("quic unprocess function %s", __func__);
     return 0;
 }
 
 static int cb_extend_max_stream_data(ngtcp2_conn *conn, int64_t stream_id,
     uint64_t max_data, void *user_data, void *stream_user_data) 
 {
+    srs_warn("quic unprocess function %s", __func__);
     return 0;
 }
 
@@ -137,40 +141,6 @@ static int cb_update_key(ngtcp2_conn *conn, uint8_t *rx_secret, uint8_t *tx_secr
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(user_data);
     return quic_transport->update_key(rx_secret, tx_secret, rx_aead_ctx, rx_iv, 
         tx_aead_ctx, tx_iv, current_tx_secret, current_rx_secret, secretlen);
-}
-
-SrsQuicStreamBuffer::SrsQuicStreamBuffer(int64_t stream_id, const uint8_t* data, const size_t size)
-    : stream_id_(stream_id)
-    , buffer_(reinterpret_cast<const char*>(data), size)
-{
-}
-
-SrsQuicStreamBuffer::~SrsQuicStreamBuffer()
-{
-}
-
-bool SrsQuicStreamBuffer::empty() const
-{
-    return buffer_.empty();
-}
-
-uint8_t* SrsQuicStreamBuffer::data()
-{
-    return reinterpret_cast<uint8_t*>(const_cast<char*>(buffer_.data()));
-}
-
-size_t SrsQuicStreamBuffer::size()
-{
-    return buffer_.size();
-}
-
-void SrsQuicStreamBuffer::consumed(const size_t size)
-{
-    if (size > buffer_.size()) {
-        buffer_.clear();
-    } else {
-        buffer_.erase(0, size);
-    }
 }
 
 SrsQuicStream::SrsQuicStream(int64_t stream_id, SrsQuicTransport* transport)
@@ -187,7 +157,7 @@ SrsQuicStream::~SrsQuicStream()
     srs_cond_destroy(ready_to_write_);
 }
 
-int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
+int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
 {
     // Split data into packet because UDP have max packet size.
     int offset = 0;
@@ -200,53 +170,73 @@ int SrsQuicStream::write(const uint8_t* buf, size_t size, srs_utime_t timeout)
             packet_size = max_packet_size;
         }
 
-        quic_transport_->push_stream_data(stream_id_, buf + offset, packet_size);
+        int nb = quic_transport_->write_stream(stream_id_, (const uint8_t*)buf + offset, packet_size, timeout);
+        if (nb < 0 ) {
+            if (quic_transport_->get_last_error() != SrsQuicErrorAgain) {
+                srs_error("write stream %ld failed, ret=%d", stream_id_, nb);
+                return -1;
+            }
+
+            srs_warn("write block, wait writeable");
+
+            if (quic_transport_->wait_writeable(timeout) != 0) {
+                quic_transport_->set_last_error(SrsQuicErrorTimeout);
+                srs_error("write stream %ld timeout", stream_id_);
+                return -1;
+            }
+        }
+
         offset += packet_size;
     }
 
-    srs_error_t err = quic_transport_->io_write_streams();
-    if (err != srs_success) {
-        srs_error("quic io failed, err=%s", srs_error_desc(err));
-        srs_freep(err);
+    // TODO: FIXME: without code below, transport rate will be slow
+    if (true) {
+        srs_error_t err = quic_transport_->quic_transport_driver();
+        if (err != srs_success) {
+            srs_error("io_write_stream failed, err=%s", srs_error_desc(err));
+            srs_freep(err);
+        }
     }
 
     return size;
 }
 
-// TODO: FIXME: this function like readmsg more?
-int SrsQuicStream::read(uint8_t* buf, size_t buf_size, srs_utime_t timeout)
+int SrsQuicStream::read(void* buf, int buf_size, srs_utime_t timeout)
 {
-    // TODO: FIXME: check buf and buf_size.
-    if (! read_queue_.empty()) {
-        string& data = read_queue_.front();
-        int size = data.size();
-        memcpy(buf, data.data(), data.size());
-        read_queue_.pop_front();
-        return size;
+    while (read_buffer_.empty()) {
+        if (srs_cond_timedwait(ready_to_read_, timeout) != 0) {
+            quic_transport_->set_last_error(SrsQuicErrorTimeout);
+            return -1;
+        }
     }
 
-    if (srs_cond_timedwait(ready_to_read_, timeout) != 0) {
-        quic_transport_->set_last_error(SrsQuicErrorTimeout);
-        return -1;
-    }
+    int size = min(buf_size, (int)read_buffer_.size());
+    memcpy(buf, read_buffer_.data(), size);
+    read_buffer_.erase(0, size);
 
-    if (read_queue_.empty()) {
-        quic_transport_->set_last_error(SrsQuicErrorIO);
-        return -1;
-    }
-
-    string& data = read_queue_.front();
-    int size = data.size();
-    memcpy(buf, data.data(), data.size());
-    read_queue_.pop_front();
     return size;
+}
+
+int SrsQuicStream::read_fully(void* buf, int buf_size, srs_utime_t timeout)
+{
+    int offset = 0;
+    while (offset != buf_size) {
+        int read_size = buf_size - offset;
+        int nb = read((uint8_t*)buf + offset, read_size, timeout);
+        if (nb <= 0) {
+            return -1;
+        }
+
+        offset += nb;
+    }
+    return offset;
 }
 
 srs_error_t SrsQuicStream::on_recv_from_quic_transport(const uint8_t* buf, size_t size)
 {
     srs_error_t err = srs_success;
 
-    read_queue_.push_back(string(reinterpret_cast<const char*>(buf), size));
+    read_buffer_.append(string(reinterpret_cast<const char*>(buf), size));
     srs_cond_signal(ready_to_read_);
 
     return err;
@@ -308,6 +298,9 @@ SrsQuicTransport::SrsQuicTransport()
     cb_.recv_new_token = NULL;
     cb_.delete_crypto_aead_ctx = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
     cb_.delete_crypto_cipher_ctx = ngtcp2_crypto_delete_crypto_cipher_ctx_cb;
+
+    writeable_cond_ = srs_cond_new();
+    nb_waiting_write_ = 0;
 }
 
 SrsQuicTransport::~SrsQuicTransport()
@@ -320,6 +313,8 @@ SrsQuicTransport::~SrsQuicTransport()
     if (conn_) {
         ngtcp2_conn_del(conn_);
     }
+
+    srs_cond_destroy(writeable_cond_);
 }
 
 ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
@@ -340,10 +335,6 @@ srs_error_t SrsQuicTransport::init_timer()
 {
     srs_error_t err = srs_success;
 
-    if ((err = timer_->tick(SRS_TICKID_QUIC_REXMIT, 10 * SRS_UTIME_MILLISECONDS)) != srs_success) {
-        return srs_error_wrap(err, "quic tick");
-    }
-
     if ((err = timer_->start()) != srs_success) {
         return srs_error_wrap(err, "timer start failed");
     }
@@ -354,7 +345,7 @@ srs_error_t SrsQuicTransport::init_timer()
 srs_error_t SrsQuicTransport::on_data(ngtcp2_path* path, const uint8_t* data, size_t size)
 {
     ngtcp2_pkt_info pkt_info;
-    int ret = ngtcp2_conn_read_pkt(conn_, path, &pkt_info, data, size, srs_get_system_startup_time());
+    int ret = ngtcp2_conn_read_pkt(conn_, path, &pkt_info, data, size, srs_get_system_time_for_quic());
     if (ret != 0) {
         switch (ret) {
           // TODO: FIXME: process case below.
@@ -376,7 +367,7 @@ srs_error_t SrsQuicTransport::on_data(ngtcp2_path* path, const uint8_t* data, si
 
     // TODO: FIXME: when to process io.
     // return err;
-    return io_write_streams();
+    return quic_transport_driver();
 }
 
 std::string SrsQuicTransport::get_conn_id()
@@ -393,7 +384,18 @@ void SrsQuicTransport::set_stream_handler(ISrsQuicStreamHandler* stream_handler)
     stream_handler_ = stream_handler;
 }
 
-srs_error_t SrsQuicTransport::update_rtt_timer()
+int SrsQuicTransport::wait_writeable(srs_utime_t timeout)
+{
+    ++nb_waiting_write_;
+    int ret = srs_cond_timedwait(writeable_cond_, timeout);
+    if (ret != 0) {
+        --nb_waiting_write_;
+    }
+
+    return ret;
+}
+
+srs_error_t SrsQuicTransport::update_quic_driver_timer()
 {
     srs_error_t err = srs_success;
 
@@ -401,17 +403,20 @@ srs_error_t SrsQuicTransport::update_rtt_timer()
         return err;
     }
 
-    // TODO: FIXME: time unit is ms or us?
     ngtcp2_tstamp expiry = ngtcp2_conn_get_expiry(conn_);
-    srs_utime_t now = srs_get_system_startup_time();
-
-    int64_t delta = (expiry - now) / NGTCP2_SECONDS;
-    if (delta < 0 || delta > 10 * SRS_UTIME_MILLISECONDS) {
-        delta = 10 * SRS_UTIME_MILLISECONDS;
+    // No timeout, return directly.
+    if (expiry == UINT64_MAX) {
+        return err;
     }
-    srs_verbose("expiry=%lu, now=%lu, delta=%ld", expiry, now, delta);
 
-    if ((err = timer_->tick(SRS_TICKID_QUIC_REXMIT, delta * SRS_UTIME_MILLISECONDS)) != srs_success) {
+    ngtcp2_tstamp now = srs_get_system_time_for_quic();
+
+    int64_t delta_ms = expiry < now ? 1 : (expiry - now) /  NGTCP2_MILLISECONDS;
+    if (delta_ms <= 0 || delta_ms > 10) {
+        delta_ms = 10;
+    }
+
+    if ((err = timer_->tick(SRS_TICKID_QUIC_DRIVER, delta_ms * SRS_UTIME_MILLISECONDS)) != srs_success) {
         return srs_error_wrap(err, "quic tick");
     }
 
@@ -487,6 +492,16 @@ int SrsQuicTransport::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint
         string& v = d.front();
         crypto.acked_offset += v.size();
         d.pop_front();
+    }
+    return 0;
+}
+
+int SrsQuicTransport::acked_stream_data_offset(uint64_t offset, uint64_t datalen) 
+{
+    // Only broadcast when there is some thread waiting writeable.
+    if (nb_waiting_write_ > 0) {
+        srs_cond_broadcast(writeable_cond_);
+        nb_waiting_write_ = 0;
     }
     return 0;
 }
@@ -599,17 +614,80 @@ int SrsQuicTransport::update_key(uint8_t *rx_secret, uint8_t *tx_secret,
 srs_error_t SrsQuicTransport::notify(int type, srs_utime_t interval, srs_utime_t tick)
 {
     srs_error_t err = srs_success;
-    if (type == SRS_TICKID_QUIC_REXMIT) {
-        err = on_timer_quic_rexmit();
+    if (type == SRS_TICKID_QUIC_DRIVER) {
+        err = on_timer_quic_driver();
     } else {
         srs_warn("timer %d no process", type);
     }
     return err;
 }
 
-srs_error_t SrsQuicTransport::on_timer_quic_rexmit()
+srs_error_t SrsQuicTransport::quic_transport_driver()
 {
-    ngtcp2_tstamp now = srs_get_system_startup_time();
+    if (conn_ == NULL) {
+        return srs_error_new(ERROR_QUIC_CONN, "null connection");
+    }
+
+    if (ngtcp2_conn_is_in_closing_period(conn_)) {
+        return send_connection_close();
+    }
+
+    uint8_t buf[NGTCP2_MAX_PKTLEN_IPV4] = {0};
+    ngtcp2_ssize ndatalen;
+
+    ngtcp2_pkt_info pi;
+    sockaddr_storage local_addr_storage;
+    sockaddr_storage remote_addr_storage;
+    ngtcp2_path path;
+    path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
+    path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
+
+    // TODO: FIXME: flow control
+    bool stop_send_loop = false;
+    while (! stop_send_loop) {
+
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+        int64_t stream_id = -1;
+
+        int nwrite = ngtcp2_conn_write_stream(conn_, &path, &pi, buf, NGTCP2_MAX_PKTLEN_IPV4, 
+				&ndatalen, flags, stream_id, NULL, 0, srs_get_system_time_for_quic());
+
+        if (nwrite < 0) {
+            switch (nwrite) {
+                // write failed becasue stream flow control.
+                case NGTCP2_ERR_STREAM_DATA_BLOCKED:
+                    stop_send_loop = true;
+                    continue;
+                // write failed becasuse stream in half close(write direction).
+                case NGTCP2_ERR_STREAM_SHUT_WR: {
+                    stop_send_loop = true;
+                    continue;
+                }
+                case NGTCP2_ERR_WRITE_MORE: {
+                    continue;
+                }
+                default: {
+                    srs_error("write stream %ld failed, err=%s", stream_id,  ngtcp2_strerror(nwrite));
+                    return on_error();
+                }
+            }
+        }
+
+        if (nwrite == 0) {
+            break;
+        }
+
+        if (send_packet(&path, buf, nwrite) <= 0) {
+            break;
+        }
+    }
+
+    return update_quic_driver_timer();
+}
+
+srs_error_t SrsQuicTransport::on_timer_quic_driver()
+{
+    ngtcp2_tstamp now = srs_get_system_time_for_quic();
     int ret = ngtcp2_conn_handle_expiry(conn_, now);
     if (ret != 0) {
         on_error();
@@ -617,7 +695,7 @@ srs_error_t SrsQuicTransport::on_timer_quic_rexmit()
                              ngtcp2_strerror(ret));
     }
 
-    return io_write_streams();
+    return quic_transport_driver();
 }
 
 srs_error_t SrsQuicTransport::on_error()
@@ -634,8 +712,6 @@ srs_error_t SrsQuicTransport::disconnect()
         return err;
     }
 
-    stream_send_queue_.clear();
-
     sockaddr_storage local_addr_storage;
     sockaddr_storage remote_addr_storage;
     ngtcp2_path path;
@@ -648,38 +724,44 @@ srs_error_t SrsQuicTransport::disconnect()
     // TODO: FIXME: add error_code enum.
 	int error_code = 666;
     int nwrite = ngtcp2_conn_write_connection_close(conn_, &path, &pi, buf, sizeof(buf), 
-                error_code, srs_get_system_startup_time());
+                error_code, srs_get_system_time_for_quic());
 
-    // TODO: FIXME: need store close frame and retry send until success?
     if (nwrite < 0) {
         return srs_error_new(ERROR_QUIC_CONN, "write connection close failed");
     }
 
+    // Store quic close frame, retry until success.
     connection_close_packet_.assign(reinterpret_cast<const char*>(buf), nwrite);
 
     if (send_packet(&path, buf, nwrite) <= 0) {
         return srs_error_new(ERROR_QUIC_CONN, "close quic connection failed");
     }
 
-    stream_send_queue_.clear();
-
     return err;
 }
 
-srs_error_t SrsQuicTransport::io_write_streams()
+int SrsQuicTransport::write_stream(const int64_t stream_id, const void* data, int len, srs_utime_t timeout)
 {
+    clear_last_error();
     if (conn_ == NULL) {
-        return srs_error_new(ERROR_QUIC_CONN, "null connection");
+        set_last_error(SrsQuicErrorBadStream);
+        return -1;
     }
 
     if (ngtcp2_conn_is_in_closing_period(conn_)) {
-        return send_connection_close();
+        srs_error_t err = send_connection_close();
+        if (err != srs_success) {
+            srs_warn("send closing failed, err=%s", srs_error_desc(err));
+            srs_freep(err);
+        }
+
+        set_last_error(SrsQuicErrorIO);
+        return -1;
     }
 
     uint8_t buf[NGTCP2_MAX_PKTLEN_IPV4] = {0};
     ngtcp2_ssize ndatalen;
 
-    ngtcp2_vec vec;
     ngtcp2_pkt_info pi;
     sockaddr_storage local_addr_storage;
     sockaddr_storage remote_addr_storage;
@@ -687,67 +769,68 @@ srs_error_t SrsQuicTransport::io_write_streams()
     path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
     path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
 
-    // TODO: FIXME: flow control
+    int pos = 0;
+
     bool stop_send_loop = false;
     while (! stop_send_loop) {
-        
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
-        size_t vcnt = 0;
-        int64_t stream_id = -1;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
 
-        if (! stream_send_queue_.empty() && ngtcp2_conn_get_max_data_left(conn_) >= stream_send_queue_.front().size()) {
-            SrsQuicStreamBuffer& buffer = stream_send_queue_.front();
-            stream_id = buffer.stream_id();
-            vec.base = buffer.data();
-            vec.len = buffer.size();
-            vcnt = 1;
-            // TODO: FIXME: when stream finish, need add flag below.
-            // flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+        if (ngtcp2_conn_get_max_data_left(conn_) < static_cast<uint64_t>(len)) {
+            set_last_error(SrsQuicErrorAgain);
+            return -1;
         }
 
-        int nwrite = ngtcp2_conn_writev_stream(conn_, &path, &pi, buf,
-            NGTCP2_MAX_PKTLEN_IPV4, &ndatalen, flags, stream_id, &vec, vcnt, srs_get_system_startup_time());
+        int nwrite = ngtcp2_conn_write_stream(conn_, &path, &pi, buf, NGTCP2_MAX_PKTLEN_IPV4, 
+                &ndatalen, flags, stream_id, (uint8_t*)data + pos, len - pos, srs_get_system_time_for_quic());
+
+        if (nwrite == 0) {
+            set_last_error(SrsQuicErrorAgain);
+            return -1;
+        }
 
         if (nwrite < 0) {
             switch (nwrite) {
                 // write failed becasue stream flow control.
                 case NGTCP2_ERR_STREAM_DATA_BLOCKED:
-                    stop_send_loop = true;
-                    continue;
+                    set_last_error(SrsQuicErrorAgain);
+                    return -1;
                 // write failed becasuse stream in half close(write direction).
                 case NGTCP2_ERR_STREAM_SHUT_WR: {
-                    stop_send_loop = true;
-                    continue;
+                    set_last_error(SrsQuicErrorIO);
+                    return -1;
                 }
                 case NGTCP2_ERR_WRITE_MORE: {
-                    SrsQuicStreamBuffer& buffer = stream_send_queue_.front();
-                    buffer.consumed(ndatalen);
-                    srs_verbose("write stream %ld need more, buffer size=%u", stream_id, buffer.size());
-                    if (buffer.empty()) {
-                        stream_send_queue_.pop_front();
-                    }
+                    pos += ndatalen;
                     continue;
                 }
                 default: {
                     srs_error("write stream %ld failed, err=%s", stream_id,  ngtcp2_strerror(nwrite));
-                    return on_error();
+                    srs_error_t err =  on_error();
+                    if (err != srs_success) {
+                        srs_freep(err);
+                    }
+
+                    set_last_error(SrsQuicErrorIO);
+                    return -1;
                 }
             }
         }
 
-        if (nwrite == 0) {
-            break;
-        }
-
+        // nwrite is the length of quic packet, include data and header
+        // ndatalen is the length of data.
+        pos += ndatalen;
         srs_verbose("send quic %d bytes data", nwrite);
         if (send_packet(&path, buf, nwrite) <= 0) {
-            // TODO: FIXME: should return err?
-            // srs_warn("send quic packet failed");
+            set_last_error(SrsQuicErrorIO);
+            return -1;
+        }
+
+        if (pos >= len) {
             break;
         }
     }
 
-    return update_rtt_timer();
+    return pos;
 }
 
 srs_error_t SrsQuicTransport::send_connection_close()
@@ -826,19 +909,7 @@ srs_error_t SrsQuicTransport::close_stream(int64_t stream_id)
     return err;
 }
 
-srs_error_t SrsQuicTransport::push_stream_data(int64_t stream_id, const uint8_t* data, size_t size)
-{
-    srs_error_t err = srs_success;
-
-    SrsQuicStreamBuffer stream_buffer(stream_id, data, size);
-
-    // TODO: FIXME: check stream queue full?
-    stream_send_queue_.push_back(stream_buffer);
-
-    return err;
-}
-
-int SrsQuicTransport::write(int64_t stream_id, const uint8_t* buf, size_t size, srs_utime_t timeout)
+int SrsQuicTransport::write(int64_t stream_id, const void* buf, int size, srs_utime_t timeout)
 {
     clear_last_error();
 
@@ -853,7 +924,7 @@ int SrsQuicTransport::write(int64_t stream_id, const uint8_t* buf, size_t size, 
     return stream->write(buf, size, timeout);
 }
 
-int SrsQuicTransport::read(int64_t stream_id, uint8_t* buf, size_t buf_size, srs_utime_t timeout)
+int SrsQuicTransport::read(int64_t stream_id, void* buf, int size, srs_utime_t timeout)
 {
     clear_last_error();
 
@@ -864,5 +935,19 @@ int SrsQuicTransport::read(int64_t stream_id, uint8_t* buf, size_t buf_size, srs
     }
 
     SrsQuicStream* stream = iter->second;
-    return stream->read(buf, buf_size, timeout);
+    return stream->read(buf, size, timeout);
+}
+
+int SrsQuicTransport::read_fully(int64_t stream_id, void* buf, int size, srs_utime_t timeout)
+{
+    clear_last_error();
+
+    map<int64_t, SrsQuicStream*>::iterator iter = streams_.find(stream_id);
+    if (iter == streams_.end()) {
+        set_last_error(SrsQuicErrorBadStream);
+        return -1;
+    }
+
+    SrsQuicStream* stream = iter->second;
+    return stream->read_fully(buf, size, timeout);
 }

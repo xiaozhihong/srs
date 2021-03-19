@@ -43,15 +43,21 @@ using namespace std;
 
 SrsQuicServer::SrsQuicServer()
 {
+    conn_manager_ = new SrsResourceManager("QUIC conn", true/*verbose*/);
 }
 
 SrsQuicServer::~SrsQuicServer()
 {
+    srs_freep(conn_manager_);
 }
 
 srs_error_t SrsQuicServer::initialize()
 {
     srs_error_t err = srs_success;
+
+    if ((err = conn_manager_->start()) != srs_success) {
+        return srs_error_wrap(err, "start manager");
+    }
 
     return err;
 }
@@ -61,13 +67,20 @@ srs_error_t SrsQuicServer::on_quic_client(SrsQuicConnection* conn, SrsQuicListen
     srs_error_t err = srs_success;
 
     if (type == SrsQuicListenerRtcForward) {
-        SrsRtcForwardQuicConn* rtc_forward_quic_conn = new SrsRtcForwardQuicConn(conn);
+        SrsRtcForwardQuicConn* rtc_forward_quic_conn = new SrsRtcForwardQuicConn(this, conn);
         conn->set_stream_handler(rtc_forward_quic_conn);
+        conn_manager_->add(rtc_forward_quic_conn);
     } else if (type == SrsQuicListenerHttpApi) {
     } else if (type == SrsQuicListenerHttpStream) {
     }
 
+
     return err;
+}
+
+void SrsQuicServer::remove(ISrsResource* resource)
+{
+    conn_manager_->remove(resource);
 }
 
 srs_error_t SrsQuicServer::listen()
@@ -190,15 +203,9 @@ srs_error_t SrsQuicServerAdapter::run()
         return srs_error_wrap(err, "listen udp");
     }
 
-    if ((err = _srs_quic_conn_manager->start()) != srs_success) {
-        return srs_error_wrap(err, "start manager");
-    }
-
     return err;
 }
 
 void SrsQuicServerAdapter::stop()
 {
 }
-
-SrsResourceManager* _srs_quic_conn_manager = new SrsResourceManager("QUIC conn", true/*verbose*/);

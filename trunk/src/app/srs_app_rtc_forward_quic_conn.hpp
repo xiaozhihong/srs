@@ -55,17 +55,22 @@ class SrsRtcForwardQuicStreamThread;
 
 // TODO: FIXME: rename it.
 // Process pull rtc stream requet, and send rtc stream over quic.
-class SrsRtcForwardQuicConn : public ISrsQuicStreamHandler
+class SrsRtcForwardQuicConn : public ISrsQuicStreamHandler, public ISrsResource
 {
 public:
-    SrsRtcForwardQuicConn(SrsQuicConnection* quic_conn);
+    SrsRtcForwardQuicConn(SrsQuicServer* server, SrsQuicConnection* quic_conn);
     ~SrsRtcForwardQuicConn();
 // Interface for SrsQuicStream
 public:
     virtual srs_error_t on_new_stream(int64_t stream_id);
+// Interface for ISrsResource
 public:
+    virtual const SrsContextId& get_id();
+    virtual std::string desc();
+public:
+    SrsQuicServer* server_;
     SrsQuicConnection* quic_conn_;
-    std::map<int64_t, SrsRtcForwardQuicStreamThread*> steram_trds_;
+    std::map<int64_t, SrsRtcForwardQuicStreamThread*> stream_trds_;
 };
 
 // TODO: FIXME: rename it.
@@ -79,18 +84,23 @@ public:
     srs_error_t start();
     virtual srs_error_t cycle();
 private:
-    srs_error_t process_req();
-    srs_error_t process_req_json(const uint8_t* data, size_t size);
+    srs_error_t do_cycle();
+    srs_error_t process_req(srs_utime_t timeout);
+    srs_error_t process_req_json(char* data, size_t size);
     srs_error_t process_rtc_forward_req(SrsJsonObject* json_obj);
     srs_error_t process_request_keyframe_req(SrsJsonObject* json_obj);
     srs_error_t do_request_keyframe();
     srs_error_t rtc_forward();
+private:
+    srs_error_t read_header(uint16_t& body_len, srs_utime_t timeout);
+    srs_error_t read_body(void* buf, int size, srs_utime_t timeout);
 private:
     SrsRtcForwardQuicConn* consumer_;
     SrsQuicConnection* quic_conn_;
     SrsRequest* req_;
     int64_t stream_id_;
     SrsSTCoroutine* trd_;
+    srs_utime_t timeout_;
 };
 
 #endif

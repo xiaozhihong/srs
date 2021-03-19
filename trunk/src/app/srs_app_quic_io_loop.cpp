@@ -142,7 +142,7 @@ std::string SrsQuicListener::get_cert()
 
 srs_error_t SrsQuicListener::on_udp_packet(SrsUdpMuxSocket* skt)
 {
-    return _quic_io->on_udp_packet(skt, this);
+    return _quic_io_loop->on_udp_packet(skt, this);
 }
 
 srs_error_t SrsQuicListener::on_accept_quic_conn(SrsQuicConnection* quic_conn)
@@ -150,33 +150,38 @@ srs_error_t SrsQuicListener::on_accept_quic_conn(SrsQuicConnection* quic_conn)
     return handler_->on_quic_client(quic_conn, listen_type_);
 }
 
-SrsQuicConnectionManager::SrsQuicConnectionManager()
+SrsQuicIoLoop::SrsQuicIoLoop()
 {
     quic_conn_map_ = new SrsResourceManager("quic conn map", true/*verbose*/);
 }
 
-SrsQuicConnectionManager::~SrsQuicConnectionManager()
+SrsQuicIoLoop::~SrsQuicIoLoop()
 {
     srs_freep(quic_conn_map_);
 }
 
-srs_error_t SrsQuicConnectionManager::initialize()
+srs_error_t SrsQuicIoLoop::initialize()
 {
     srs_error_t err = srs_success;
     return err;
 }
 
-void SrsQuicConnectionManager::subscribe(SrsQuicConnection* quic_conn)
+void SrsQuicIoLoop::subscribe(SrsQuicConnection* quic_conn)
 {
     quic_conn_map_->subscribe(quic_conn);
 }
 
-void SrsQuicConnectionManager::unsubscribe(SrsQuicConnection* quic_conn)
+void SrsQuicIoLoop::unsubscribe(SrsQuicConnection* quic_conn)
 {
     quic_conn_map_->unsubscribe(quic_conn);
 }
 
-srs_error_t SrsQuicConnectionManager::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* listener)
+void SrsQuicIoLoop::remove(ISrsResource* resource)
+{
+    quic_conn_map_->remove(resource);
+}
+
+srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* listener)
 {
     srs_error_t err = srs_success;
 
@@ -221,7 +226,7 @@ srs_error_t SrsQuicConnectionManager::on_udp_packet(SrsUdpMuxSocket* skt, SrsQui
     return quic_conn->on_udp_packet(skt, data, size);
 }
 
-srs_error_t SrsQuicConnectionManager::send_version_negotiation(SrsUdpMuxSocket* skt, const uint8_t version, 
+srs_error_t SrsQuicIoLoop::send_version_negotiation(SrsUdpMuxSocket* skt, const uint8_t version, 
     const uint8_t* dcid, const size_t dcid_len, const uint8_t* scid, const size_t scid_len)
 {
     srs_error_t err = srs_success;
@@ -249,7 +254,7 @@ srs_error_t SrsQuicConnectionManager::send_version_negotiation(SrsUdpMuxSocket* 
 }
 
 
-srs_error_t SrsQuicConnectionManager::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener* listener, SrsQuicConnection** p_conn)
+srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener* listener, SrsQuicConnection** p_conn)
 {
     srs_error_t err = srs_success;
 
@@ -293,4 +298,4 @@ srs_error_t SrsQuicConnectionManager::new_connection(SrsUdpMuxSocket* skt, SrsQu
     return err;
 }
 
-SrsQuicConnectionManager* _quic_io = new SrsQuicConnectionManager();
+SrsQuicIoLoop* _quic_io_loop = new SrsQuicIoLoop();

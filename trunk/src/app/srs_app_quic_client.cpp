@@ -75,7 +75,7 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
     // TODO: FIXME: conf this values using SrsQuicParam struct.
     settings.log_printf = ngtcp2_log_handle;
     settings.qlog.write = qlog_handle;
-	settings.initial_ts = srs_get_system_startup_time();
+	settings.initial_ts = srs_get_system_time_for_quic();
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
   	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
@@ -193,7 +193,7 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
 
-    if ((err = timer_->start()) != srs_success) {
+    if ((err = init_timer()) != srs_success) {
         return srs_error_wrap(err, "timer start failed");
     }
 
@@ -230,13 +230,13 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port)
         return srs_error_wrap(err, "connect to %s:%u failed", ip.c_str(), port);
     }
 
-    if ((err = io_write_streams()) != srs_success) {
+    if ((err = quic_transport_driver()) != srs_success) {
         return srs_error_wrap(err, "send quic client init packet failed");
     }
 
     // TODO: FIXME: timeout as a param of connect functin.
     connection_cond_ = srs_cond_new();
-    if (srs_cond_timedwait(connection_cond_, 1000 * SRS_UTIME_MILLISECONDS) != 0) {
+    if (srs_cond_timedwait(connection_cond_, 5000 * SRS_UTIME_MILLISECONDS) != 0) {
         return srs_error_new(ERROR_QUIC_CLIENT, "connect to %s:%u timeout", ip.c_str(), port);
     }
 

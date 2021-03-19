@@ -37,6 +37,7 @@
 
 class SrsHourGlass;
 class SrsQuicConnection;
+class ISrsResource;
 class SrsResourceManager;
 class SrsQuicTlsServerContext;
 class SrsQuicToken;
@@ -51,6 +52,7 @@ public:
 // Interface for ISrsQuicHandler
 public:
     virtual srs_error_t on_quic_client(SrsQuicConnection* conn, SrsQuicListenerType type);
+    void remove(ISrsResource* resource);
 public:
     srs_error_t initialize();
 public:
@@ -63,6 +65,7 @@ private:
     srs_error_t listen_rtc_server_quic();
 private:
     std::vector<SrsQuicListener*> listeners_;
+    SrsResourceManager* conn_manager_;
 };
 
 // The QUIC server adapter.
@@ -78,7 +81,5 @@ public:
     virtual srs_error_t run();
     virtual void stop();
 };
-
-extern SrsResourceManager* _srs_quic_conn_manager;
 
 #endif

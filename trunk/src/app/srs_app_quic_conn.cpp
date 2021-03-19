@@ -50,22 +50,19 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContext
     : SrsQuicTransport()
 {
     disposing_ = false;
-    _quic_io->subscribe(this);
+    _quic_io_loop->subscribe(this);
 
     cid_ = cid;
     listener_ = listener;
-    timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
 
     stream_handler_ = NULL;
 }
 
 SrsQuicConnection::~SrsQuicConnection()
 {
-    _quic_io->unsubscribe(this);
-    srs_freep(timer_);
+    _quic_io_loop->unsubscribe(this);
 
-    // TODO: FIXME: stream handler need to free?
-    srs_freep(stream_handler_);
+    _quic_io_loop->remove(this);
 }
 
 srs_error_t SrsQuicConnection::accept(SrsUdpMuxSocket* skt, ngtcp2_pkt_hd* hd)
@@ -108,7 +105,7 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
     // TODO: FIXME: conf this values using struct like SrsQuicParam.
     settings.log_printf = ngtcp2_log_handle;
     settings.qlog.write = qlog_handle;
-    settings.initial_ts = srs_get_system_startup_time();
+    settings.initial_ts = srs_get_system_time_for_quic();
   	settings.token.base = token;
   	settings.token.len = tokenlen;
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
@@ -197,6 +194,9 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
         return srs_error_wrap(err, "init quic token failed");
     } 
 
+    if ((err = init_timer()) != srs_success) {
+        return srs_error_wrap(err, "init timer failed");
+    }
 
     ngtcp2_conn_set_tls_native_handle(conn_, tls_session_->get_ssl());
 

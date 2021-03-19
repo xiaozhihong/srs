@@ -71,12 +71,40 @@ void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datal
     srs_verbose("QLOG # %s", string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
+string dump_quic_conn_stat(ngtcp2_conn* conn)
+{
+    ngtcp2_conn_stat stat;
+    ngtcp2_conn_get_conn_stat(conn, &stat);
+    stringstream ss;
+    ss << "latest_rtt=" << stat.latest_rtt
+       << ",min_rtt=" << stat.min_rtt
+       << ",smoothed_rtt=" << stat.smoothed_rtt
+       << ",rttvar=" << stat.rttvar
+       << ",initial_rtt=" << stat.initial_rtt
+       << ",first_rtt_sample_ts=" << stat.first_rtt_sample_ts
+       << ",pto_count=" << stat.pto_count
+       << ",loss_detection_timer=" << stat.loss_detection_timer
+       << ",cwnd=" << stat.cwnd
+       << ",ssthresh=" << stat.ssthresh
+       << ",congestion_recovery_start_ts=" << stat.congestion_recovery_start_ts
+       << ",bytes_in_flight=" << stat.bytes_in_flight
+       << ",max_udp_payload_size=" << stat.max_udp_payload_size
+       << ",delivery_rate_sec=" << stat.delivery_rate_sec;
+
+    return ss.str();
+}
+
 int srs_generate_rand_data(uint8_t* dest, size_t destlen)
 {
 	for (size_t i = 0 ; i < destlen; ++i) {
         dest[i] = random() % 255;
 	}
     return 0;
+}
+
+ngtcp2_tstamp srs_get_system_time_for_quic()
+{
+    return srs_get_system_time() * 1000;
 }
 
 SrsQuicToken::SrsQuicToken()
