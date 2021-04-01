@@ -151,7 +151,7 @@ srs_error_t SrsRtcForwardQuicClient::read_header(SrsQuicClient* quic_client, int
 {
     srs_error_t err = srs_success;
 
-    char header[2];
+    uint8_t header[2];
     int nb = quic_client->read_fully(stream_id, header, sizeof(header), timeout);
     if (nb == 0) {
         return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
@@ -188,7 +188,7 @@ srs_error_t SrsRtcForwardQuicClient::connect_and_open_stream(SrsQuicClient* quic
     // TODO: FIXME: ip:port from config file.
     string ip = "127.0.0.1";
     uint16_t port = 12000;
-    if ((err = quic_client->connect(ip, port)) != srs_success) {
+    if ((err = quic_client->connect(ip, port, timeout_)) != srs_success) {
         return srs_error_wrap(err, "connect rtc upstream %s:%u failed", ip.c_str(), port);
     }
 
@@ -302,30 +302,14 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
             srs_trace("write request_keyframe success");
         }
 
-        uint8_t header[2];
-        int nb = quic_client->read_fully(rtc_forward_stream, header, sizeof(header), 5 * SRS_UTIME_SECONDS);
-        if (nb == 0) {
-            return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
-        } else if (nb < 0) {
-            if (quic_client->get_last_error() == SrsQuicErrorTimeout) {
-                continue;
-            }
-            return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
+        uint16_t body_len = 0;
+	    if ((err = read_header(quic_client, rtc_forward_stream, body_len, timeout_)) != srs_success) {
+            return srs_error_wrap(err, "read header failed");
         }
 
-        uint16_t header_size = header[0] << 8 | header[1];
-        char* rtp_data = new char[header_size];
-        nb = quic_client->read_fully(rtc_forward_stream, rtp_data, header_size, 5 * SRS_UTIME_SECONDS);
-        srs_verbose("recv %d nb in quic stream", nb);
-        if (nb == 0) {
-            SrsAutoFreeA(char, rtp_data);
-            return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
-        } else if (nb < 0) {
-            if (quic_client->get_last_error() == SrsQuicErrorTimeout) {
-                continue;
-            }
-
-            return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
+        char* rtp_data = new char[body_len];
+        if ((err = read_body(quic_client, rtc_forward_stream, rtp_data, body_len, timeout_)) != srs_success) {
+            return srs_error_wrap(err, "read body failed");
         }
 
 		SrsRtpPacket2* pkt = new SrsRtpPacket2();
@@ -333,7 +317,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
 
         // TODO: FIXME: is it need to decode agagin?
 		if (true) {
-    	    SrsBuffer b(rtp_data, nb);
+    	    SrsBuffer b(rtp_data, body_len);
     	    if ((err = pkt->decode(&b)) != srs_success) {
                 SrsAutoFreeA(char, rtp_data);
     	        srs_error("decode rtp packet");
@@ -342,7 +326,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         }
 
     	pkt->shared_msg = new SrsSharedPtrMessage();
-    	pkt->shared_msg->wrap(rtp_data, nb);
+    	pkt->shared_msg->wrap(rtp_data, body_len);
 
         // TODO: FIXME
         if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {

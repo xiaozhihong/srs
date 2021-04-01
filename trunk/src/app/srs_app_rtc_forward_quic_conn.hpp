@@ -55,12 +55,20 @@ class SrsRtcForwardQuicStreamThread;
 
 // TODO: FIXME: rename it.
 // Process pull rtc stream requet, and send rtc stream over quic.
-class SrsRtcForwardQuicConn : public ISrsQuicStreamHandler, public ISrsResource
+class SrsRtcForwardQuicConn : public ISrsQuicStreamHandler, public ISrsResource, 
+    virtual public ISrsCoroutineHandler
 {
 public:
     SrsRtcForwardQuicConn(SrsQuicServer* server, SrsQuicConnection* quic_conn);
     ~SrsRtcForwardQuicConn();
-// Interface for SrsQuicStream
+
+    srs_error_t start();
+    virtual srs_error_t cycle();
+private:
+    srs_error_t do_cycle();
+public:
+    void notify_stream_close(int64_t stream_id);
+// Interface for ISrsQuicStreamHandler
 public:
     virtual srs_error_t on_new_stream(int64_t stream_id);
 // Interface for ISrsResource
@@ -68,9 +76,13 @@ public:
     virtual const SrsContextId& get_id();
     virtual std::string desc();
 public:
+    SrsSTCoroutine* trd_;
     SrsQuicServer* server_;
     SrsQuicConnection* quic_conn_;
     std::map<int64_t, SrsRtcForwardQuicStreamThread*> stream_trds_;
+    std::set<int64_t> stream_need_clean_;
+    srs_cond_t conn_event_cond_;
+    bool quic_conn_need_close_;
 };
 
 // TODO: FIXME: rename it.

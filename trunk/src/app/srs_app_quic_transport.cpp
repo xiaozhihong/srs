@@ -177,7 +177,7 @@ int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
                 return -1;
             }
 
-            srs_warn("write block, wait writeable");
+            // srs_warn("write block, wait writeable");
 
             if (quic_transport_->wait_writeable(timeout) != 0) {
                 quic_transport_->set_last_error(SrsQuicErrorTimeout);
@@ -250,8 +250,6 @@ void SrsQuicStream::on_open(SrsQuicTransport* transport)
 void SrsQuicStream::on_close(SrsQuicTransport* transport)
 {
     srs_assert(transport == quic_transport_);
-
-    quic_transport_ = NULL;
 
     // Notify st-thread which waiting read result.
     srs_cond_signal(ready_to_read_);
@@ -622,6 +620,22 @@ srs_error_t SrsQuicTransport::notify(int type, srs_utime_t interval, srs_utime_t
     return err;
 }
 
+bool SrsQuicTransport::check_timeout()
+{
+    ngtcp2_tstamp timeout = ngtcp2_conn_get_idle_expiry(conn_);
+    // UINT64_MAX means never timeout.
+    if (timeout == UINT64_MAX) {
+        return false;
+    }
+
+    ngtcp2_tstamp now = srs_get_system_time_for_quic();
+    if (now > timeout) {
+        return true;
+    }
+
+    return false;
+}
+
 srs_error_t SrsQuicTransport::quic_transport_driver()
 {
     if (conn_ == NULL) {
@@ -690,9 +704,19 @@ srs_error_t SrsQuicTransport::on_timer_quic_driver()
     ngtcp2_tstamp now = srs_get_system_time_for_quic();
     int ret = ngtcp2_conn_handle_expiry(conn_, now);
     if (ret != 0) {
-        on_error();
+        srs_error_t err = on_error();
+        if (err != srs_success) {
+            srs_freep(err);
+        }
         return srs_error_new(ERROR_QUIC_CONN, "ngtcp2_conn_handle_expiry failed, err=%s",
                              ngtcp2_strerror(ret));
+    }
+
+    if (check_timeout()) {
+        srs_error_t err = on_error();
+        if (err != srs_success) {
+            srs_freep(err);
+        }
     }
 
     return quic_transport_driver();
@@ -708,7 +732,6 @@ srs_error_t SrsQuicTransport::disconnect()
     srs_error_t err = srs_success;
 
     if (! conn_ || ngtcp2_conn_is_in_closing_period(conn_)) {
-        srs_trace("quic conn is closing");
         return err;
     }
 
@@ -805,7 +828,7 @@ int SrsQuicTransport::write_stream(const int64_t stream_id, const void* data, in
                 }
                 default: {
                     srs_error("write stream %ld failed, err=%s", stream_id,  ngtcp2_strerror(nwrite));
-                    srs_error_t err =  on_error();
+                    srs_error_t err = on_error();
                     if (err != srs_success) {
                         srs_freep(err);
                     }
@@ -848,6 +871,8 @@ srs_error_t SrsQuicTransport::send_connection_close()
                      connection_close_packet_.size()) <= 0) {
         return srs_error_new(ERROR_QUIC_CONN, "close quic connection failed");
     }
+
+    // TODO: FIXME: need to timeout for N timeout, if peer is no alive.
 
     return err;
 }

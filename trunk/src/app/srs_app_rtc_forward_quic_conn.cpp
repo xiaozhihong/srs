@@ -68,6 +68,9 @@ SrsRtcForwardQuicConn::SrsRtcForwardQuicConn(SrsQuicServer* server, SrsQuicConne
 {
     server_ = server;
     quic_conn_ = quic_conn;
+    trd_ = NULL;
+    conn_event_cond_ = srs_cond_new();
+    quic_conn_need_close_ = false;
 }
 
 SrsRtcForwardQuicConn::~SrsRtcForwardQuicConn()
@@ -77,25 +80,87 @@ SrsRtcForwardQuicConn::~SrsRtcForwardQuicConn()
         srs_freep(iter->second);
     }
 
-    server_->remove(this);
     srs_freep(quic_conn_);
+    srs_freep(trd_);
+}
+
+srs_error_t SrsRtcForwardQuicConn::start()
+{
+    srs_error_t err = srs_success;
+
+    trd_ = new SrsSTCoroutine("rtc_forward_quic_conn", this);
+    if ((err = trd_->start()) != srs_success) {
+        return srs_error_wrap(err, "start rtc forward conn thread failed");
+    }
+
+    return err;
+}
+
+srs_error_t SrsRtcForwardQuicConn::cycle()
+{
+    srs_error_t err = srs_success;
+
+    if ((err = do_cycle()) != srs_success) {
+        srs_error("do cycle failed, err=%s", srs_error_desc(err).c_str());
+    }
+
+    server_->remove(this);
+
+    return err;
+}
+
+srs_error_t SrsRtcForwardQuicConn::do_cycle()
+{
+    srs_error_t err = srs_success;
+
+    while (true) {
+        if ((err = trd_->pull()) != srs_success) {
+            return srs_error_wrap(err, "rtc forward quic conn thread failed");
+        }
+
+        if (srs_cond_timedwait(conn_event_cond_, SRS_UTIME_SECONDS) != 0) {
+            continue;
+        }
+
+        for (set<int64_t>::iterator iter = stream_need_clean_.begin(); iter != stream_need_clean_.end(); ++iter) {
+            int64_t stream_id = *iter;
+            std::map<int64_t, SrsRtcForwardQuicStreamThread*>::iterator it = stream_trds_.find(stream_id);
+            if (it == stream_trds_.end()) {
+                continue;
+            }
+            srs_trace("stream %ld thread stop", stream_id);
+            SrsRtcForwardQuicStreamThread* stream_trd = it->second;
+            srs_freep(stream_trd);
+            stream_trds_.erase(it);
+        }
+
+        stream_need_clean_.clear();
+
+        if (quic_conn_need_close_) {
+            return srs_error_new(ERROR_RTC_FORWARD, "quic conn failed");
+        }
+    }
+
+    return err;
+}
+
+void SrsRtcForwardQuicConn::notify_stream_close(int64_t stream_id)
+{
+    stream_need_clean_.insert(stream_id);
+    srs_cond_signal(conn_event_cond_);
 }
 
 srs_error_t SrsRtcForwardQuicConn::on_new_stream(int64_t stream_id)
 {
     srs_error_t err = srs_success;
 
-    // TODO: FIXME: manger by streamurl.
     SrsRtcForwardQuicStreamThread* trd = new SrsRtcForwardQuicStreamThread(this, stream_id);
     if ((err = trd->start()) != srs_success) {
+        srs_freep(trd);
         return srs_error_wrap(err, "rtc forward consumer start failed");
     }
 
-    // TODO: FIXME: two question must thinking.
-    // 1. How to implement http/3 in quic connection and steams.
-    // 2. Is that's right to create one quic conneciont per rtc stream?
-    //    Any best way? For example, one link per server, multi streams
-    //    for different rtc stream.
+    stream_trds_.insert(make_pair(stream_id, trd));
 
     return err;
 }
@@ -296,6 +361,10 @@ srs_error_t SrsRtcForwardQuicStreamThread::cycle()
         srs_error("do cycle failed, err=%s", srs_error_desc(err).c_str());
     }
 
+    quic_conn_->close_stream(stream_id_);
+    consumer_->notify_stream_close(stream_id_);
+    // TODO: need to close stream?
+
     return err;
 }
 
@@ -373,7 +442,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
     SrsAutoFreeA(char, req_buf);
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
-            return srs_error_wrap(err, "quic client io thread");
+            return srs_error_wrap(err, "rtc forward quic conn thread failed");
         }
 
 		// TODO: FIXME:don't use magic number.

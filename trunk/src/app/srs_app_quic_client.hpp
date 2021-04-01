@@ -69,7 +69,7 @@ private:
 
 // SrsQuicClient API
 public:
-    srs_error_t connect(const std::string& ip, uint16_t port);
+    srs_error_t connect(const std::string& ip, uint16_t port, srs_utime_t timeout);
 private:
     // Quic client udp packet io recv thread.
     virtual srs_error_t cycle();

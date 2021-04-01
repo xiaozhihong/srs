@@ -145,6 +145,7 @@ private:
 protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
 protected:
+    bool check_timeout();
     virtual srs_error_t quic_transport_driver();
     srs_error_t send_connection_close();
     // Get static secret to generate quic token.

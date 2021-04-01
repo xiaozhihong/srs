@@ -110,7 +110,8 @@ srs_error_t SrsQuicClient::create_udp_socket()
     // TODO: FIXME: too complex.
     addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
+    // TODO: FIXME: Ipv6 need support?
+    hints.ai_family   = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags    = AI_NUMERICHOST;
 
@@ -200,7 +201,7 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
     return err;
 }
 
-srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port)
+srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_utime_t timeout)
 {
     srs_error_t err = srs_success;
 
@@ -234,9 +235,8 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port)
         return srs_error_wrap(err, "send quic client init packet failed");
     }
 
-    // TODO: FIXME: timeout as a param of connect functin.
     connection_cond_ = srs_cond_new();
-    if (srs_cond_timedwait(connection_cond_, 5000 * SRS_UTIME_MILLISECONDS) != 0) {
+    if (srs_cond_timedwait(connection_cond_, timeout) != 0) {
         return srs_error_new(ERROR_QUIC_CLIENT, "connect to %s:%u timeout", ip.c_str(), port);
     }
 
