@@ -308,24 +308,23 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         }
 
         char* rtp_data = new char[body_len];
+        SrsAutoFreeA(char, rtp_data);
         if ((err = read_body(quic_client, rtc_forward_stream, rtp_data, body_len, timeout_)) != srs_success) {
             return srs_error_wrap(err, "read body failed");
         }
 
-		SrsRtpPacket2* pkt = new SrsRtpPacket2();
-    	SrsAutoFree(SrsRtpPacket2, pkt);
+        SrsRtpPacket2* pkt = _srs_rtp_cache->allocate();
+        pkt->reset();
+
+    	char* p = pkt->wrap(rtp_data, body_len);
 
         // TODO: FIXME: is it need to decode agagin?
-		if (true) {
-    	    SrsBuffer b(rtp_data, body_len);
-    	    if ((err = pkt->decode(&b)) != srs_success) {
-                SrsAutoFreeA(char, rtp_data);
-    	        srs_error("decode rtp packet");
-                continue;
-    	    }
-        }
-
-    	pkt->wrap(rtp_data, body_len);
+    	SrsBuffer b(p, body_len);
+    	if ((err = pkt->decode(&b)) != srs_success) {
+    	    srs_error("decode rtp packet");
+            srs_freep(err);
+            continue;
+    	}
 
         // TODO: FIXME
         if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
@@ -335,8 +334,11 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         }
 
 		if ((err = rtc_source->on_rtp(pkt)) != srs_success) {
+            _srs_rtp_cache->recycle(pkt);
             return srs_error_wrap(err, "process rtp packet failed");
         }
+
+        _srs_rtp_cache->recycle(pkt);
     }
     return err;
 }

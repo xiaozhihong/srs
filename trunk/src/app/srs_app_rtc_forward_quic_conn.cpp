@@ -448,9 +448,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         return srs_error_wrap(err, "dumps consumer, url=%s", req_->get_stream_url().c_str());
     }
 
-    static int kMaxReqSize = 1024 * 10;
-    char* req_buf = new char[kMaxReqSize];
-    SrsAutoFreeA(char, req_buf);
+    char cache_buf[1500];
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "rtc forward quic conn thread failed");
@@ -460,12 +458,12 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         consumer->dump_packet(&pkt);
 
         if (!pkt) {
+            // TODO: FIXME: bad code.
             if ((err = process_req(SRS_UTIME_MILLISECONDS)) != srs_success) {
                 if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
                     return srs_error_wrap(err, "quic stream error");
                 }
             }
-
             continue;
         }
 
@@ -473,9 +471,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
             continue;
         }
 
-        char buf[1500];
         // 2bytes for rtc forward quic header.
-        SrsBuffer stream(buf, sizeof(buf));
+        SrsBuffer stream(cache_buf, sizeof(cache_buf));
         stream.write_2bytes(0);
         if ((err = pkt->encode(&stream)) != srs_success) {
             return srs_error_wrap(err, "encode packet");
@@ -483,13 +480,15 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
 
         if (true) {
             uint16_t rtp_size = stream.pos() - 2;
-            SrsBuffer header_writer(buf, 2);
+            SrsBuffer header_writer(cache_buf, 2);
             header_writer.write_2bytes(rtp_size);
         }
 
         if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
             return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
         }
+
+        _srs_rtp_cache->recycle(pkt);
     }
 
     return err;
