@@ -68,7 +68,6 @@ srs_error_t SrsQuicServer::on_quic_client(SrsQuicConnection* conn, SrsQuicListen
 
     if (type == SrsQuicListenerRtcForward) {
         SrsRtcForwardQuicConn* rtc_forward_quic_conn = new SrsRtcForwardQuicConn(this, conn);
-        conn->set_stream_handler(rtc_forward_quic_conn);
         conn_manager_->add(rtc_forward_quic_conn);
         if ((err = rtc_forward_quic_conn->start()) != srs_success) {
             return srs_error_wrap(err, "quic rtc_forward_quic_conn start failed");

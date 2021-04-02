@@ -69,8 +69,6 @@ SrsRtcForwardQuicConn::SrsRtcForwardQuicConn(SrsQuicServer* server, SrsQuicConne
     server_ = server;
     quic_conn_ = quic_conn;
     trd_ = NULL;
-    conn_event_cond_ = srs_cond_new();
-    quic_conn_need_close_ = false;
 }
 
 SrsRtcForwardQuicConn::~SrsRtcForwardQuicConn()
@@ -118,41 +116,29 @@ srs_error_t SrsRtcForwardQuicConn::do_cycle()
             return srs_error_wrap(err, "rtc forward quic conn thread failed");
         }
 
-        if (srs_cond_timedwait(conn_event_cond_, SRS_UTIME_SECONDS) != 0) {
-            continue;
+        if ((err = accept_stream()) != srs_success) {
+            return srs_error_wrap(err, "accept stream failed");
         }
 
-        for (set<int64_t>::iterator iter = stream_need_clean_.begin(); iter != stream_need_clean_.end(); ++iter) {
-            int64_t stream_id = *iter;
-            std::map<int64_t, SrsRtcForwardQuicStreamThread*>::iterator it = stream_trds_.find(stream_id);
-            if (it == stream_trds_.end()) {
-                continue;
-            }
-            srs_trace("stream %ld thread stop", stream_id);
-            SrsRtcForwardQuicStreamThread* stream_trd = it->second;
-            srs_freep(stream_trd);
-            stream_trds_.erase(it);
-        }
-
-        stream_need_clean_.clear();
-
-        if (quic_conn_need_close_) {
-            return srs_error_new(ERROR_RTC_FORWARD, "quic conn failed");
-        }
+        clean_stream_thread();
     }
 
     return err;
 }
 
-void SrsRtcForwardQuicConn::notify_stream_close(int64_t stream_id)
-{
-    stream_need_clean_.insert(stream_id);
-    srs_cond_signal(conn_event_cond_);
-}
-
-srs_error_t SrsRtcForwardQuicConn::on_new_stream(int64_t stream_id)
+srs_error_t SrsRtcForwardQuicConn::accept_stream()
 {
     srs_error_t err = srs_success;
+
+    int64_t stream_id = -1;
+    if (quic_conn_->accept_stream(SRS_UTIME_SECONDS, stream_id) != 0) {
+        if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
+            return srs_error_new(ERROR_RTC_FORWARD, "accept stream failed");
+        }
+        return err;
+    }
+
+    srs_trace("accept new stream %ld", stream_id);
 
     SrsRtcForwardQuicStreamThread* trd = new SrsRtcForwardQuicStreamThread(this, stream_id);
     if ((err = trd->start()) != srs_success) {
@@ -163,6 +149,22 @@ srs_error_t SrsRtcForwardQuicConn::on_new_stream(int64_t stream_id)
     stream_trds_.insert(make_pair(stream_id, trd));
 
     return err;
+}
+
+void SrsRtcForwardQuicConn::clean_stream_thread()
+{
+    std::map<int64_t, SrsRtcForwardQuicStreamThread*>::iterator iter = stream_trds_.begin();
+    while (iter != stream_trds_.end()) {
+        SrsRtcForwardQuicStreamThread* stream_trd = iter->second;
+        srs_error_t err = srs_success;
+        if ((err = stream_trd->pull()) != srs_success) {
+            srs_freep(err);
+            srs_freep(stream_trd);
+            stream_trds_.erase(iter++);
+        } else {
+            ++iter;
+        }
+    }
 }
 
 const SrsContextId& SrsRtcForwardQuicConn::get_id()
@@ -203,6 +205,16 @@ srs_error_t SrsRtcForwardQuicStreamThread::start()
     }
 
     return err;
+}
+
+srs_error_t SrsRtcForwardQuicStreamThread::pull()
+{
+    srs_error_t err = srs_success;
+
+    if (trd_ == NULL) {
+        return srs_error_new(ERROR_RTC_FORWARD, "null thread");
+    }
+    return trd_->pull();
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::read_header(uint16_t& body_len, srs_utime_t timeout)
@@ -362,7 +374,6 @@ srs_error_t SrsRtcForwardQuicStreamThread::cycle()
     }
 
     quic_conn_->close_stream(stream_id_);
-    consumer_->notify_stream_close(stream_id_);
     // TODO: need to close stream?
 
     return err;

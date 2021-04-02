@@ -36,6 +36,7 @@
 #include <deque>
 #include <string>
 #include <map>
+#include <set>
 #include <vector>
 #include <sys/socket.h>
 
@@ -52,16 +53,6 @@ enum SrsQuicStreamDirection
     QuicStreamSendOnly = 1,
     QuicStreamRecvOnly = 2,
     QuicStreamSendRecv = 3,
-};
-
-// Stream event handler for quic connection.
-class ISrsQuicStreamHandler
-{
-public:
-    ISrsQuicStreamHandler() {}
-    virtual ~ISrsQuicStreamHandler() {}
-public:
-    virtual srs_error_t on_new_stream(int64_t stream_id) = 0;
 };
 
 enum SrsQuicError
@@ -88,6 +79,11 @@ public:
     int read_fully(void* buf, int buf_size, srs_utime_t timeout);
 
     int64_t get_stream_id() const { return stream_id_; }
+public:
+    int wait_writeable(srs_utime_t timeout);
+    int notify_writeable();
+    int wait_readable(srs_utime_t timeout);
+    int notify_readable();
 private:
     void on_open(SrsQuicTransport* transport);
     void on_close(SrsQuicTransport* transport);
@@ -128,9 +124,8 @@ public:
     srs_error_t on_data(ngtcp2_path* path, const uint8_t* data, size_t size);
     ngtcp2_conn* conn() { return conn_; }
     std::string get_conn_id();
-    void set_stream_handler(ISrsQuicStreamHandler* stream_handler);
+    void wait_stream_writeable(int64_t stream_id);
     SrsQuicError get_last_error() const { return last_err_; }
-    int wait_writeable(srs_utime_t timeout);
 private:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
@@ -141,6 +136,8 @@ private:
 private:
     srs_error_t on_error();
     srs_error_t disconnect();
+
+    void notify_accept_stream(int64_t stream_id);
 // interface ISrsHourGlass
 protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
@@ -168,7 +165,9 @@ public:
     int recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen);
 	int on_stream_open(int64_t stream_id);
 	int on_stream_close(int64_t stream_id, uint64_t app_error_code);
+    int on_stream_reset(int64_t stream_id, uint64_t final_size, uint64_t app_error_code);
     int get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen);
+    int extend_max_stream_data(int64_t stream_id, uint64_t max_data);
     int update_key(uint8_t *rx_secret, uint8_t *tx_secret, ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
             ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv, const uint8_t *current_rx_secret,
             const uint8_t *current_tx_secret, size_t secretlen);
@@ -177,6 +176,7 @@ public:
     // TODO: FIXME: add annotation.
     virtual srs_error_t open_stream(int64_t* stream_id);
     virtual srs_error_t close_stream(int64_t stream_id);
+    int accept_stream(srs_utime_t timeout, int64_t& stream_id);
     int write(int64_t stream_id, const void* buf, int size, srs_utime_t timeout);
     int read(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
     int read_fully(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
@@ -201,7 +201,7 @@ protected:
     // Struct to store quic crypto data(TLS handshake).
     struct SrsQuicCryptoBuffer {
         SrsQuicCryptoBuffer() : acked_offset(0) {}
-        std::deque<std::string> data;
+        std::deque<std::string> queue;
         size_t acked_offset;
     } crypto_buffer_[3];
 
@@ -211,10 +211,10 @@ protected:
 protected:
     std::string connection_close_packet_;
     std::map<int64_t, SrsQuicStream*> streams_;
-    ISrsQuicStreamHandler* stream_handler_;
     SrsQuicError last_err_;
-    int nb_waiting_write_;
-    srs_cond_t writeable_cond_;
+    std::set<int64_t> stream_waiting_writeable_;
+    srs_cond_t accept_stream_cond_;
+    std::deque<int64_t> wait_accept_streams_;
 };
 
 #endif

@@ -54,8 +54,6 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContext
 
     cid_ = cid;
     listener_ = listener;
-
-    stream_handler_ = NULL;
 }
 
 SrsQuicConnection::~SrsQuicConnection()
