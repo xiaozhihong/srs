@@ -456,21 +456,16 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
             return srs_error_wrap(err, "rtc forward quic conn thread failed");
         }
 
-		// TODO: FIXME:don't use magic number.
-        // consumer->wait(1);
+        SrsRtpPacket2* pkt = NULL;
+        consumer->dump_packet(&pkt);
 
-        if ((err = process_req(SRS_UTIME_MILLISECONDS)) != srs_success) {
-            if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
-                return srs_error_wrap(err, "quic stream error");
+        if (!pkt) {
+            if ((err = process_req(SRS_UTIME_MILLISECONDS)) != srs_success) {
+                if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
+                    return srs_error_wrap(err, "quic stream error");
+                }
             }
-        }
 
-        // TODO: FIXME: Handle error.
-        vector<SrsRtpPacket2*> pkts;
-        consumer->dump_packets(pkts);
-
-        int msg_count = (int)pkts.size();
-        if (!msg_count) {
             continue;
         }
 
@@ -479,24 +474,21 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         }
 
         char buf[1500];
-        for (int i = 0; i < msg_count; ++i) {
-            SrsRtpPacket2* pkt = pkts[i];
-            // 2bytes for rtc forward quic header.
-            SrsBuffer stream(buf, sizeof(buf));
-            stream.write_2bytes(0);
-            if ((err = pkt->encode(&stream)) != srs_success) {
-                return srs_error_wrap(err, "encode packet");
-            }
+        // 2bytes for rtc forward quic header.
+        SrsBuffer stream(buf, sizeof(buf));
+        stream.write_2bytes(0);
+        if ((err = pkt->encode(&stream)) != srs_success) {
+            return srs_error_wrap(err, "encode packet");
+        }
 
-            if (true) {
-                uint16_t rtp_size = stream.pos() - 2;
-                SrsBuffer header_writer(buf, 2);
-                header_writer.write_2bytes(rtp_size);
-            }
+        if (true) {
+            uint16_t rtp_size = stream.pos() - 2;
+            SrsBuffer header_writer(buf, 2);
+            header_writer.write_2bytes(rtp_size);
+        }
 
-            if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
-                return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
-            }
+        if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
+            return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
         }
     }
 

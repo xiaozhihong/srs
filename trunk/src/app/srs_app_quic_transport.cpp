@@ -265,7 +265,7 @@ void SrsQuicStream::on_close(SrsQuicTransport* transport)
 
 SrsQuicTransport::SrsQuicTransport()
 {
-    timer_ = new SrsHourGlass(this, 1 * SRS_UTIME_MILLISECONDS);
+    timer_ = new SrsHourGlass("quic", this, 1 * SRS_UTIME_MILLISECONDS);
     conn_ = NULL;
     udp_fd_ = NULL;
     local_addr_len_ = 0;

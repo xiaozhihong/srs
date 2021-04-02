@@ -826,6 +826,10 @@ srs_error_t SrsRtmpConn::do_playing(SrsSource* source, SrsConsumer* consumer, Sr
         if (send_min_interval > 0) {
             srs_usleep(send_min_interval);
         }
+
+        // Yield to another coroutines.
+        // @see https://github.com/ossrs/srs/issues/2194#issuecomment-777437476
+        srs_thread_yield();
     }
     
     return err;

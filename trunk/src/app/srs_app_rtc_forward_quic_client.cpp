@@ -325,8 +325,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
     	    }
         }
 
-    	pkt->shared_msg = new SrsSharedPtrMessage();
-    	pkt->shared_msg->wrap(rtp_data, body_len);
+    	pkt->wrap(rtp_data, body_len);
 
         // TODO: FIXME
         if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
