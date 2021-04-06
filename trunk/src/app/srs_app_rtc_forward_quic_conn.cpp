@@ -463,11 +463,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
                 if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
                     return srs_error_wrap(err, "quic stream error");
                 }
+                srs_freep(err);
             }
-            continue;
-        }
-
-        if (! quic_conn_) {
             continue;
         }
 
