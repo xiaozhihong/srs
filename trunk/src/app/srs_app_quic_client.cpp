@@ -59,8 +59,8 @@ SrsQuicClient::SrsQuicClient()
 
 SrsQuicClient::~SrsQuicClient()
 {
-    srs_close_stfd(udp_fd_);
     srs_freep(trd_);
+    srs_close_stfd(udp_fd_);
 
     if (connection_cond_) {
         srs_cond_destroy(connection_cond_);

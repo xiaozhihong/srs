@@ -138,6 +138,7 @@ private:
     srs_error_t disconnect();
 
     void notify_accept_stream(int64_t stream_id);
+    void notify_stream_writeable(int64_t stream_id);
 // interface ISrsHourGlass
 protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
@@ -156,7 +157,7 @@ public:
     int on_application_tx_key();
     int write_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen);
     int acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint64_t offset, uint64_t datalen);
-    int acked_stream_data_offset(uint64_t offset, uint64_t datalen);
+    int acked_stream_data_offset(int64_t stream_id, uint64_t offset, uint64_t datalen);
     void set_tls_alert(uint8_t alert);
 // Ngtcp2 callback function
 public:
@@ -167,6 +168,7 @@ public:
 	int on_stream_close(int64_t stream_id, uint64_t app_error_code);
     int on_stream_reset(int64_t stream_id, uint64_t final_size, uint64_t app_error_code);
     int get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen);
+    int remove_connection_id(const ngtcp2_cid *cid);
     int extend_max_stream_data(int64_t stream_id, uint64_t max_data);
     int update_key(uint8_t *rx_secret, uint8_t *tx_secret, ngtcp2_crypto_aead_ctx *rx_aead_ctx, uint8_t *rx_iv,
             ngtcp2_crypto_aead_ctx *tx_aead_ctx, uint8_t *tx_iv, const uint8_t *current_rx_secret,

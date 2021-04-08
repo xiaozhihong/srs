@@ -125,7 +125,7 @@ srs_error_t SrsRtcForwardQuicClient::do_cycle()
 
     SrsQuicClient* quic_client = new SrsQuicClient();
     // TODO: FIXME:it will crash here.
-    // SrsAutoFree(SrsQuicClient, quic_client);
+    SrsAutoFree(SrsQuicClient, quic_client);
 
     while (true) {
         if ((err = trd_->pull()) != srs_success) {

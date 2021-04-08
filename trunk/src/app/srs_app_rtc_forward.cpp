@@ -108,11 +108,13 @@ srs_error_t SrsRtcForward::on_before_play(SrsRtcConnection* session, SrsRequest*
 
     if (! rtc_source->can_publish()) {
         // TODO: FIXME: rtc forward maybe failed? 
+        srs_trace("stream %s can not publish, play directly", req->get_stream_url().c_str());
         return err;
     }
 
     if (rtc_source->publish_stream() != NULL) {
-        // TODO: FIXME: stream already exist,but  rtc forward maybe failed? 
+        // TODO: FIXME: stream already exist, but rtc forward maybe failed? 
+        srs_trace("stream %s already pulled from other server", req->get_stream_url().c_str());
         return err;
     }
 

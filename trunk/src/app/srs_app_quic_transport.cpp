@@ -79,7 +79,7 @@ static int cb_acked_stream_data_offset(ngtcp2_conn *conn, int64_t stream_id,
     uint64_t offset, uint64_t datalen, void *user_data, void *stream_user_data) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    return quic_transport->acked_stream_data_offset(offset, datalen);
+    return quic_transport->acked_stream_data_offset(stream_id, offset, datalen);
 }
 
 static int cb_stream_open(ngtcp2_conn *conn, int64_t stream_id, void *user_data) 
@@ -106,6 +106,12 @@ static int cb_get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
     return quic_transport->get_new_connection_id(cid, token, cidlen);
+}
+
+static int cb_remove_connection_id(ngtcp2_conn *conn, const ngtcp2_cid *cid, void *user_data)
+{
+    SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
+    return quic_transport->remove_connection_id(cid);
 }
 
 static int cb_path_validation(ngtcp2_conn *conn, const ngtcp2_path *path,
@@ -292,7 +298,7 @@ SrsQuicTransport::SrsQuicTransport()
     cb_.extend_max_local_streams_uni = NULL;
     cb_.rand = cb_rand;
     cb_.get_new_connection_id = cb_get_new_connection_id;
-    cb_.remove_connection_id = NULL;
+    cb_.remove_connection_id = cb_remove_connection_id;
     cb_.update_key = cb_update_key;
     cb_.path_validation = cb_path_validation;
     cb_.select_preferred_addr = NULL;
@@ -487,7 +493,7 @@ int SrsQuicTransport::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint
     return 0;
 }
 
-int SrsQuicTransport::acked_stream_data_offset(uint64_t offset, uint64_t datalen) 
+int SrsQuicTransport::acked_stream_data_offset(int64_t stream_id, uint64_t offset, uint64_t datalen) 
 {
     return 0;
 }
@@ -583,7 +589,20 @@ int SrsQuicTransport::get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, siz
     return 0;
 }
 
+int SrsQuicTransport::remove_connection_id(const ngtcp2_cid *cid)
+{
+    // TODO: FIXME:
+    srs_warn("remove quic connection id");
+    return 0;
+}
+
 int SrsQuicTransport::extend_max_stream_data(int64_t stream_id, uint64_t max_data)
+{
+    notify_stream_writeable(stream_id);
+    return 0;
+}
+
+void SrsQuicTransport::notify_stream_writeable(int64_t stream_id)
 {
     set<int64_t>::iterator iter_wait = stream_waiting_writeable_.find(stream_id);
     if (iter_wait != stream_waiting_writeable_.end()) {
@@ -594,7 +613,6 @@ int SrsQuicTransport::extend_max_stream_data(int64_t stream_id, uint64_t max_dat
         }
         stream_waiting_writeable_.erase(iter_wait);
     }
-    return 0;
 }
 
 int SrsQuicTransport::update_key(uint8_t *rx_secret, uint8_t *tx_secret,

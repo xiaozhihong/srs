@@ -448,7 +448,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         return srs_error_wrap(err, "dumps consumer, url=%s", req_->get_stream_url().c_str());
     }
 
-    char cache_buf[1500];
+    char fixed_buffer[1500];
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "rtc forward quic conn thread failed");
@@ -469,7 +469,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         }
 
         // 2bytes for rtc forward quic header.
-        SrsBuffer stream(cache_buf, sizeof(cache_buf));
+        SrsBuffer stream(fixed_buffer, sizeof(fixed_buffer));
         stream.write_2bytes(0);
         if ((err = pkt->encode(&stream)) != srs_success) {
             return srs_error_wrap(err, "encode packet");
@@ -477,7 +477,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
 
         if (true) {
             uint16_t rtp_size = stream.pos() - 2;
-            SrsBuffer header_writer(cache_buf, 2);
+            SrsBuffer header_writer(fixed_buffer, 2);
             header_writer.write_2bytes(rtp_size);
         }
 
