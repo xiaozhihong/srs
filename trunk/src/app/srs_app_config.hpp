@@ -573,6 +573,7 @@ public:
     bool get_rtc_nack_enabled(std::string vhost);
     bool get_rtc_nack_no_copy(std::string vhost);
     bool get_rtc_twcc_enabled(std::string vhost);
+    std::vector<std::string> get_rtc_coworkers(std::string vhost);
 
 // vhost specified section
 public:

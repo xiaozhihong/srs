@@ -277,6 +277,7 @@ srs_error_t SrsGoApiV1::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessage* r
     urls->set("clients", SrsJsonAny::str("manage all clients or specified client, default query top 10 clients"));
     urls->set("raw", SrsJsonAny::str("raw api for srs, support CUID srs for instance the config"));
     urls->set("clusters", SrsJsonAny::str("origin cluster server API"));
+    urls->set("rtc_clusters", SrsJsonAny::str("origin rtc cluster server API"));
     urls->set("perf", SrsJsonAny::str("System performance stat"));
     urls->set("tcmalloc", SrsJsonAny::str("tcmalloc api with params ?page=summary|api"));
 
@@ -1299,6 +1300,40 @@ srs_error_t SrsGoApiClusters::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMess
     
     SrsCoWorkers* coworkers = SrsCoWorkers::instance();
     data->set("origin", coworkers->dumps(vhost, coworker, app, stream));
+    
+    return srs_api_response(w, r, obj->dumps());
+}
+
+SrsGoApiRtcClusters::SrsGoApiRtcClusters()
+{
+}
+
+SrsGoApiRtcClusters::~SrsGoApiRtcClusters()
+{
+}
+
+srs_error_t SrsGoApiRtcClusters::serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessage* r)
+{
+    SrsJsonObject* obj = SrsJsonAny::object();
+    SrsAutoFree(SrsJsonObject, obj);
+    
+    obj->set("code", SrsJsonAny::integer(ERROR_SUCCESS));
+    SrsJsonObject* data = SrsJsonAny::object();
+    obj->set("data", data);
+    
+    string ip = r->query_get("ip");
+    string vhost = r->query_get("vhost");
+    string app = r->query_get("app");
+    string stream = r->query_get("stream");
+    string coworker = r->query_get("coworker");
+    data->set("query", SrsJsonAny::object()
+              ->set("ip", SrsJsonAny::str(ip.c_str()))
+              ->set("vhost", SrsJsonAny::str(vhost.c_str()))
+              ->set("app", SrsJsonAny::str(app.c_str()))
+              ->set("stream", SrsJsonAny::str(stream.c_str())));
+    
+    SrsCoWorkers* coworkers = SrsCoWorkers::instance();
+    data->set("origin", coworkers->dumps_rtc(vhost, coworker, app, stream));
     
     return srs_api_response(w, r, obj->dumps());
 }

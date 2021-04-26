@@ -950,6 +950,8 @@ srs_error_t SrsQuicTransport::open_stream(int64_t* stream_id)
     SrsQuicStream* new_stream = new SrsQuicStream(*stream_id, this);
     streams_.insert(make_pair(*stream_id, new_stream));
 
+    srs_trace("open stream %ld success", *stream_id);
+
     return err;
 }
 

@@ -53,6 +53,19 @@
 
     <label></label>
     SessionID: <span id='sessionid'></span>
+    <br>
+    AudioStat:
+    bytesReceived/s: <span id='a_bytesReceived'></span> 
+    packetsReceived/s: <span id='a_packetsReceived'></span>
+    packetLost: <span id='a_packetLost'></span>
+    <br>
+    VideoStat:  
+    bytesReceived/s: <span id='v_bytesReceived'></span> 
+    packetsReceived/s: <span id='v_packetsReceived'></span>
+    framesDecoded/s: <span id='v_framesDecoded'></span>
+    nackCount: <span id='v_nackCount'></span>
+    pliCount: <span id='v_pliCount'></span>
+    packetLost: <span id='v_packetLost'></span>
 
     <label></label>
     Simulator: <a href='#' id='simulator-drop'>Drop</a>
@@ -63,6 +76,7 @@
     </footer>
 </div>
 <script type="text/javascript">
+    var sdk = null; // Global handler to do cleanup when replaying.
     $(function(){
         // Async-await-promise based SRS RTC Player.
         function SrsRtcPlayerAsync() {
@@ -125,8 +139,12 @@
             };
 
             // Close the publisher.
-            self.close = function() {
-                self.pc.close();
+            self.close = async function() {
+                if (self.pc) {
+                    console.log('destroy pc');
+                    await self.pc.close();
+                    self.pc = null;
+                }
             };
 
             // The callback when got remote stream.
@@ -280,13 +298,14 @@
             return self;
         }
 
-        var sdk = null; // Global handler to do cleanup when replaying.
         var startPlay = function() {
             $('#rtc_media_player').show();
 
             // Close PC when user replay.
             if (sdk) {
+                console.log('destroy sdk');
                 sdk.close();
+                sdk = null;
             }
 
             sdk = new SrsRtcPlayerAsync();
@@ -325,6 +344,46 @@
             startPlay();
         }
     });
+
+    let last_a = {
+        bytesReceived: 0,
+        packetsReceived: 0,
+        packetsLost: 0
+    };
+    let last_v = {
+        bytesReceived: 0,
+        packetsReceived: 0,
+        nackCount:0,
+        pliCount:0,
+        framesDecoded:0,
+        packetsLost: 0
+    };
+	window.setInterval(function() {
+		if (sdk && sdk.pc) {
+    		sdk.pc.getReceivers().forEach(receiver => {
+    		    receiver.getStats().then(function(stats) {
+    		        stats.forEach(report => {
+    		            if (report.type == 'inbound-rtp') {
+    		                if (report.kind == 'audio') {
+                                $('#a_bytesReceived').html(report.bytesReceived - last_a.bytesReceived);
+                                $('#a_packetsReceived').html(report.packetsReceived - last_a.packetsReceived);
+                                $('#a_packetLost').html(report.packetsLost);
+    		                    last_a = report;
+    		                } else if (report.kind == 'video') {
+                                $('#v_bytesReceived').html(report.bytesReceived - last_v.bytesReceived);
+                                $('#v_packetsReceived').html(report.packetsReceived - last_v.packetsReceived);
+                                $('#v_framesDecoded').html(report.framesDecoded - last_v.framesDecoded);
+                                $('#v_nackCount').html(report.nackCount);
+                                $('#v_pliCount').html(report.pliCount);
+                                $('#v_packetLost').html(report.packetsLost);
+    		                    last_v = report;
+    		                }
+    		            }
+    		        });
+    		    });
+    		});
+		}
+	}, 1000);
 </script>
 </body>
 </html>

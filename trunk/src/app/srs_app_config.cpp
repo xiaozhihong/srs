@@ -3960,7 +3960,7 @@ srs_error_t SrsConfig::check_normal_config()
                 for (int j = 0; j < (int)conf->directives.size(); j++) {
                     string m = conf->at(j)->name;
                     if (m != "enabled" && m != "bframe" && m != "aac" && m != "stun_timeout" && m != "stun_strict_check"
-                        && m != "dtls_role" && m != "dtls_version" && m != "drop_for_pt") {
+                        && m != "dtls_role" && m != "dtls_version" && m != "drop_for_pt" && m != "cluster") {
                         return srs_error_new(ERROR_SYSTEM_CONFIG_INVALID, "illegal vhost.rtc.%s of %s", m.c_str(), vhost->arg0().c_str());
                     }
                 }
@@ -5388,6 +5388,28 @@ bool SrsConfig::get_rtc_twcc_enabled(string vhost)
     }
 
     return SRS_CONF_PERFER_TRUE(conf->arg0());
+}
+
+vector<string> SrsConfig::get_rtc_coworkers(string vhost)
+{
+    vector<string> coworkers;
+
+    SrsConfDirective* conf = get_rtc(vhost);
+    if (!conf) {
+        return coworkers;
+    }
+
+    conf = conf->get("cluster");
+    if (!conf) {
+        return coworkers;
+    }
+
+    conf = conf->get("coworkers");
+    for (int i = 0; i < (int)conf->args.size(); i++) {
+        coworkers.push_back(conf->args.at(i));
+    }
+
+    return coworkers;
 }
 
 SrsConfDirective* SrsConfig::get_vhost(string vhost, bool try_default_vhost)

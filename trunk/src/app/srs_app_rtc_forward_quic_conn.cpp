@@ -333,18 +333,14 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject
     }
 
     // Serialize rtc stream description, send back to caller.
-    string rtc_stream_description = "";
-    SrsJsonObject* obj = SrsJsonAny::object();
-    SrsAutoFree(SrsJsonObject, obj);
+    SrsJsonObject* obj_rtc_stream = SrsJsonAny::object();
+    SrsAutoFree(SrsJsonObject, obj_rtc_stream);
 
-    SrsJsonObject* obj_rtc_stream_description = SrsJsonAny::object();
-    obj->set("rtc_stream_description", obj_rtc_stream_description);
-
-    if ((err = rtc_source->get_stream_desc()->to_json(obj_rtc_stream_description)) != srs_success) {
+    if ((err = rtc_source->to_json(obj_rtc_stream)) != srs_success) {
         return srs_error_wrap(err, "rtc stream description to json failed");
     }
     
-    string control_response =  obj->dumps();
+    string control_response = obj_rtc_stream->dumps();
     uint16_t header_len = 2;
     uint16_t body_len = control_response.size();
     char* buf = new char[header_len + body_len];

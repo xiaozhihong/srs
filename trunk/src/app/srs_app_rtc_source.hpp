@@ -128,10 +128,16 @@ public:
     SrsRtcStreamManager();
     virtual ~SrsRtcStreamManager();
 public:
-    //  create source when fetch from cache failed.
+    // create source when fetch from cache failed.
     // @param r the client request.
     // @param pps the matched source, if success never be NULL.
     virtual srs_error_t fetch_or_create(SrsRequest* r, SrsRtcStream** pps);
+
+    // Return stream_url is existed.
+    bool stream_exist(std::string stream_url);
+    // Return stream_url is existed and publishing.
+    // TODO: FIXME: Refine the code.
+    bool stream_publishing(std::string stream_url, int& forward_level);
 private:
     // Get the exists source, NULL when not exists.
     // update the request and return the exists source.
@@ -190,6 +196,10 @@ private:
     bool is_delivering_packets_;
     // Notify stream event to event handler
     std::vector<ISrsRtcStreamEventHandler*> event_handlers_;
+    // Prev add consumer time, use to check can stop rtc stream forward.
+    srs_utime_t prev_touch_time_;
+    // Level of cur stream forward level.
+    int forward_level_;
 public:
     SrsRtcStream();
     virtual ~SrsRtcStream();
@@ -207,6 +217,8 @@ public:
     // Get the bridger.
     ISrsSourceBridger* bridger();
 public:
+    // Touch and update forward timeout time.
+    void touch();
     // Create consumer
     // @param consumer, output the create consumer.
     virtual srs_error_t create_consumer(SrsRtcConsumer*& consumer);
@@ -233,6 +245,10 @@ public:
     // Get and set the publisher, passed to consumer to process requests such as PLI.
     ISrsRtcPublishStream* publish_stream();
     void set_publish_stream(ISrsRtcPublishStream* v);
+    // Get and set forward level, passed to rtc forwarder to detect forward level.
+    int get_forward_level();
+    void set_forward_level(int level);
+    void incr_forward_level();
     // Consume the shared RTP packet, user must free it.
     srs_error_t on_rtp(SrsRtpPacket2* pkt);
     // Set and get stream description for souce
@@ -240,6 +256,11 @@ public:
     void set_stream_desc(SrsRtcStreamDescription* stream_desc);
     SrsRtcStreamDescription* get_stream_desc();
     std::vector<SrsRtcTrackDescription*> get_track_desc(std::string type, std::string media_type);
+    // Check had recv rtp packet from publish from now-timeout ago.
+    bool can_stop_forward(srs_utime_t timeout);
+    // Serialize/UnSerialize struct SrsRtcStream in json format.
+    virtual srs_error_t to_json(SrsJsonObject* obj);
+    virtual srs_error_t from_json(SrsJsonObject* obj);
 };
 
 // A helper class, to release the packet to cache.

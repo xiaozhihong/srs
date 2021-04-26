@@ -272,6 +272,7 @@ srs_error_t SrsRtcStreamManager::fetch_or_create(SrsRequest* r, SrsRtcStream** p
 
     SrsRtcStream* source = NULL;
     if ((source = fetch(r)) != NULL) {
+        source->touch();
         *pps = source;
         return err;
     }
@@ -294,6 +295,22 @@ srs_error_t SrsRtcStreamManager::fetch_or_create(SrsRequest* r, SrsRtcStream** p
     *pps = source;
 
     return err;
+}
+
+bool SrsRtcStreamManager::stream_exist(std::string stream_url)
+{
+    return pool.find(stream_url) != pool.end();
+}
+
+bool SrsRtcStreamManager::stream_publishing(std::string stream_url, int& forward_level)
+{
+    std::map<std::string, SrsRtcStream*>::iterator iter = pool.find(stream_url);
+    if (iter == pool.end()) {
+        return false;
+    }
+
+    forward_level = iter->second->get_forward_level();
+    return ! iter->second->can_publish();
 }
 
 SrsRtcStream* SrsRtcStreamManager::fetch(SrsRequest* r)
@@ -343,6 +360,9 @@ SrsRtcStream::SrsRtcStream()
 
     req = NULL;
     bridger_ = new SrsRtcDummyBridger(this);
+
+    prev_touch_time_ = srs_get_system_time();
+    forward_level_ = 0;
 }
 
 SrsRtcStream::~SrsRtcStream()
@@ -418,6 +438,11 @@ ISrsSourceBridger* SrsRtcStream::bridger()
     return bridger_;
 }
 
+void SrsRtcStream::touch()
+{
+    prev_touch_time_ = srs_get_system_time();
+}
+
 srs_error_t SrsRtcStream::create_consumer(SrsRtcConsumer*& consumer)
 {
     srs_error_t err = srs_success;
@@ -426,6 +451,8 @@ srs_error_t SrsRtcStream::create_consumer(SrsRtcConsumer*& consumer)
     consumers.push_back(consumer);
 
     // TODO: FIXME: Implements edge cluster.
+    
+    touch();
 
     return err;
 }
@@ -561,6 +588,21 @@ void SrsRtcStream::set_publish_stream(ISrsRtcPublishStream* v)
     publish_stream_ = v;
 }
 
+int SrsRtcStream::get_forward_level() 
+{
+    return forward_level_;
+}
+
+void SrsRtcStream::set_forward_level(int level)
+{
+    forward_level_ = level;
+}
+
+void SrsRtcStream::incr_forward_level()
+{
+    ++forward_level_;
+}
+
 srs_error_t SrsRtcStream::on_rtp(SrsRtpPacket2* pkt)
 {
     srs_error_t err = srs_success;
@@ -617,6 +659,49 @@ std::vector<SrsRtcTrackDescription*> SrsRtcStream::get_track_desc(std::string ty
     }
 
     return track_descs;
+}
+
+bool SrsRtcStream::can_stop_forward(srs_utime_t timeout) {
+    return consumers.empty() && srs_get_system_time() - prev_touch_time_ >= timeout;
+}
+
+srs_error_t SrsRtcStream::to_json(SrsJsonObject* obj)
+{
+    srs_error_t err = srs_success;
+
+    obj->set("forward_level", SrsJsonAny::integer(forward_level_));
+
+    SrsJsonObject* obj_stream_desc = SrsJsonAny::object();
+    obj->set("stream_desc", obj_stream_desc);
+    if (stream_desc_) {
+        stream_desc_->to_json(obj_stream_desc);
+    }
+
+    return err;
+}
+
+srs_error_t SrsRtcStream::from_json(SrsJsonObject* obj)
+{
+    srs_error_t err = srs_success;
+
+    SrsJsonAny* prop = NULL;
+    if ((prop = obj->ensure_property_integer("forward_level")) == NULL) {
+        return srs_error_new(ERROR_RTC_FORWARD, "json no found forward_level");
+    }
+    forward_level_ = prop->to_integer(); 
+
+    if ((prop = obj->ensure_property_object("stream_desc")) == NULL) {
+        return srs_error_new(ERROR_RTC_FORWARD, "json no found stream_desc");
+    }
+
+    SrsJsonObject* obj_stream_desc = prop->to_object(); 
+    srs_freep(stream_desc_);
+    stream_desc_ = new SrsRtcStreamDescription();
+    if ((err = stream_desc_->from_json(obj_stream_desc)) != srs_success) {
+        return srs_error_wrap(err, "stream desc decode from json failed");
+    }
+
+    return err;
 }
 
 SrsRtpPacketCacheHelper::SrsRtpPacketCacheHelper()

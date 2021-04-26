@@ -33,6 +33,7 @@ using namespace std;
 #include <srs_protocol_utility.hpp>
 #include <srs_service_utility.hpp>
 #include <srs_kernel_utility.hpp>
+#include <srs_app_rtc_source.hpp>
 
 SrsCoWorkers* SrsCoWorkers::_instance = NULL;
 
@@ -69,6 +70,7 @@ SrsJsonAny* SrsCoWorkers::dumps(string vhost, string coworker, string app, strin
     // The service port parsing from listen port.
     string listen_host;
     int listen_port = SRS_CONSTS_RTMP_DEFAULT_PORT;
+
     vector<string> listen_hostports = _srs_config->get_listens();
     if (!listen_hostports.empty()) {
         string list_hostport = listen_hostports.at(0);
@@ -110,13 +112,80 @@ SrsJsonAny* SrsCoWorkers::dumps(string vhost, string coworker, string app, strin
     // The routers to detect loop and identify path.
     SrsJsonArray* routers = SrsJsonAny::array()->append(SrsJsonAny::str(backend.c_str()));
 
-    srs_trace("Redirect vhost=%s, path=%s/%s to ip=%s, port=%d, api=%s",
-        vhost.c_str(), app.c_str(), stream.c_str(), service_ip.c_str(), listen_port, backend.c_str());
+    srs_trace("Redirect rtmp, vhost=%s, path=%s/%s to ip=%s, port=%d, api=%s",
+        vhost.c_str(), app.c_str(), stream.c_str(), service_ip.c_str(), 
+        listen_port, backend.c_str());
 
     return SrsJsonAny::object()
         ->set("ip", SrsJsonAny::str(service_ip.c_str()))
         ->set("port", SrsJsonAny::integer(listen_port))
         ->set("vhost", SrsJsonAny::str(r->vhost.c_str()))
+        ->set("api", SrsJsonAny::str(backend.c_str()))
+        ->set("routers", routers);
+}
+
+SrsJsonAny* SrsCoWorkers::dumps_rtc(string vhost, string coworker, string app, string stream)
+{
+    string stream_url = srs_generate_stream_url(vhost, app, stream);
+    int forward_level = 0;
+    if (! _srs_rtc_sources->stream_publishing(stream_url, forward_level)) {
+        return SrsJsonAny::null();
+    }
+
+    // TODO: FIXME: from conf file.
+    const int max_forward_level = 2;
+    // For low latency, we must limit max level of rtc forward.
+    if (forward_level > max_forward_level) {
+        srs_warn("stream %s forward level=%d, more than max level %d", stream_url.c_str(), 
+            forward_level, max_forward_level);
+        return SrsJsonAny::null();
+    }
+
+    // The service port parsing from listen port.
+    string listen_host;
+    int listen_port = SRS_CONSTS_RTMP_DEFAULT_PORT;
+
+    // TODO: FIXME: check rtc enable, and multi port support.
+    listen_port = ::atoi(_srs_config->get_rtc_server_quic_listen().c_str());
+
+    // The ip of server, we use the request coworker-host as ip, if listen host is localhost or loopback.
+    // For example, the server may behind a NAT(192.x.x.x), while its ip is a docker ip(172.x.x.x),
+    // we should use the NAT(192.x.x.x) address as it's the exposed ip.
+    // @see https://github.com/ossrs/srs/issues/1501
+    string service_ip;
+    if (listen_host != SRS_CONSTS_LOCALHOST && listen_host != SRS_CONSTS_LOOPBACK && listen_host != SRS_CONSTS_LOOPBACK6) {
+        service_ip = listen_host;
+    }
+    if (service_ip.empty()) {
+        int coworker_port;
+        string coworker_host = coworker;
+        if (coworker.find(":") != string::npos) {
+            srs_parse_hostport(coworker, coworker_host, coworker_port);
+        }
+
+        service_ip = coworker_host;
+    }
+    if (service_ip.empty()) {
+        service_ip = srs_get_public_internet_address();
+    }
+
+    // The backend API endpoint.
+    string backend = _srs_config->get_http_api_listen();
+    if (backend.find(":") == string::npos) {
+        backend = service_ip + ":" + backend;
+    }
+    
+    // The routers to detect loop and identify path.
+    SrsJsonArray* routers = SrsJsonAny::array()->append(SrsJsonAny::str(backend.c_str()));
+
+    srs_trace("Redirect rtc vhost=%s, path=%s/%s to ip=%s, port=%d, api=%s",
+        vhost.c_str(), app.c_str(), stream.c_str(), service_ip.c_str(), 
+        listen_port, backend.c_str());
+
+    return SrsJsonAny::object()
+        ->set("ip", SrsJsonAny::str(service_ip.c_str()))
+        ->set("port", SrsJsonAny::integer(listen_port))
+        ->set("vhost", SrsJsonAny::str(vhost.c_str()))
         ->set("api", SrsJsonAny::str(backend.c_str()))
         ->set("routers", routers);
 }

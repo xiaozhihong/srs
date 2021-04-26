@@ -213,6 +213,15 @@ public:
     virtual srs_error_t serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessage* r);
 };
 
+class SrsGoApiRtcClusters : public ISrsHttpHandler
+{
+public:
+    SrsGoApiRtcClusters();
+    virtual ~SrsGoApiRtcClusters();
+public:
+    virtual srs_error_t serve_http(ISrsHttpResponseWriter* w, ISrsHttpMessage* r);
+};
+
 class SrsGoApiPerf : public ISrsHttpHandler
 {
 public:

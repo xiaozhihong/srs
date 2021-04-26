@@ -997,6 +997,9 @@ srs_error_t SrsServer::http_handle()
     if ((err = http_api_mux->handle("/api/v1/clusters", new SrsGoApiClusters())) != srs_success) {
         return srs_error_wrap(err, "handle clusters");
     }
+    if ((err = http_api_mux->handle("/api/v1/rtc_clusters", new SrsGoApiRtcClusters())) != srs_success) {
+        return srs_error_wrap(err, "handle rtc clusters");
+    }
     if ((err = http_api_mux->handle("/api/v1/perf", new SrsGoApiPerf())) != srs_success) {
         return srs_error_wrap(err, "handle perf");
     }

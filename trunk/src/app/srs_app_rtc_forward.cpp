@@ -107,22 +107,19 @@ srs_error_t SrsRtcForward::on_before_play(SrsRtcConnection* session, SrsRequest*
     }
 
     if (! rtc_source->can_publish()) {
-        // TODO: FIXME: rtc forward maybe failed? 
-        srs_trace("stream %s can not publish, play directly", req->get_stream_url().c_str());
         return err;
     }
 
-    if (rtc_source->publish_stream() != NULL) {
-        // TODO: FIXME: stream already exist, but rtc forward maybe failed? 
-        srs_trace("stream %s already pulled from other server", req->get_stream_url().c_str());
-        return err;
-    }
+    ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
+    srs_freep(publish_stream);
 
-    // TODO: FIXME: when to free it.
     SrsRtcForwardQuicClient* rtc_forward_quic_client = new SrsRtcForwardQuicClient(req);
     if ((err = rtc_forward_quic_client->start()) != srs_success) {
+        srs_freep(rtc_forward_quic_client);
+
         return srs_error_wrap(err, "rtc forward quic client start failed");
     }
+
     rtc_source->set_publish_stream(rtc_forward_quic_client);
 
     return err;

@@ -368,6 +368,9 @@
 #define ERROR_RTC_NO_TRACK                  5030
 #define ERROR_RTC_RTCP_EMPTY_RR             5031
 #define ERROR_RTC_FORWARD                   5032
+#define ERROR_RTC_NO_NEED_FORWARD           5033
+#define ERROR_RTC_CLUSTER_REDIRECT          5034
+
 
 ///////////////////////////////////////////////////////
 // GB28181 API error.

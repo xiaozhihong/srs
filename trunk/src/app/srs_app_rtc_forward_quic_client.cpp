@@ -51,6 +51,7 @@ using namespace std;
 #include <srs_service_utility.hpp>
 #include <srs_http_stack.hpp>
 #include <srs_app_http_api.hpp>
+#include <srs_app_http_hooks.hpp>
 #include <srs_app_statistic.hpp>
 #include <srs_app_pithy_print.hpp>
 #include <srs_service_st.hpp>
@@ -91,7 +92,7 @@ srs_error_t SrsRtcForwardQuicClient::start()
     }
 
     // First rtc player must wait rtc stream description to negotiate.
-    if (srs_cond_timedwait(cond_waiting_sdp_, 5 * SRS_UTIME_SECONDS) != 0) {
+    if (srs_cond_timedwait(cond_waiting_sdp_, timeout_) != 0) {
         srs_freep(trd_);
         return srs_error_new(ERROR_RTC_FORWARD, "rtc forward receive sdp timeout");
     }
@@ -100,17 +101,6 @@ srs_error_t SrsRtcForwardQuicClient::start()
 }
 
 srs_error_t SrsRtcForwardQuicClient::cycle()
-{
-    srs_error_t err = do_cycle();
-
-    if (err != srs_success) {
-        srs_error("do_cycle failed, %s", srs_error_desc(err).c_str());
-    }
-
-    return err;
-}
-
-srs_error_t SrsRtcForwardQuicClient::do_cycle()
 {
     srs_error_t err = srs_success;
 
@@ -123,8 +113,40 @@ srs_error_t SrsRtcForwardQuicClient::do_cycle()
         return srs_error_new(ERROR_RTC_SOURCE_BUSY, "stream %s busy", req_->get_stream_url().c_str());
     }
 
+    rtc_source->on_publish();
+
+    while (true) {
+		if ((err = trd_->pull()) != srs_success) {
+            return srs_error_wrap(err, "rtc forward client");
+        }
+
+        if ((err = do_cycle(rtc_source)) != srs_success) {
+            if (srs_error_code(err) == ERROR_RTC_NO_NEED_FORWARD || 
+                srs_error_code(err) == ERROR_RTC_CLUSTER_REDIRECT) {
+                break;
+            }
+
+            srs_warn("Rtc forwrd client, ignore error=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+
+        srs_usleep(1 * SRS_UTIME_SECONDS);
+    }
+
+    rtc_source->on_unpublish();
+
+    if (err != srs_success) {
+        srs_error("do_cycle failed, %s", srs_error_desc(err).c_str());
+    }
+
+    return err;
+}
+
+srs_error_t SrsRtcForwardQuicClient::do_cycle(SrsRtcStream* rtc_source)
+{
+    srs_error_t err = srs_success;
+
     SrsQuicClient* quic_client = new SrsQuicClient();
-    // TODO: FIXME:it will crash here.
     SrsAutoFree(SrsQuicClient, quic_client);
 
     while (true) {
@@ -185,20 +207,43 @@ srs_error_t SrsRtcForwardQuicClient::connect_and_open_stream(SrsQuicClient* quic
 {
     srs_error_t err = srs_success;
 
-    // TODO: FIXME: ip:port from config file.
-    string ip = "127.0.0.1";
-    uint16_t port = 12000;
-    if ((err = quic_client->connect(ip, port, timeout_)) != srs_success) {
-        return srs_error_wrap(err, "connect rtc upstream %s:%u failed", ip.c_str(), port);
+    string host = "";
+    int port = 0;
+
+	if (true) {
+        vector<string> coworkers = _srs_config->get_rtc_coworkers(req_->vhost);
+        for (int i = 0; i < (int)coworkers.size(); i++) {
+            // TODO: FIXME: User may config the server itself as coworker, we must identify and ignore it.
+            string coworker = coworkers.at(i);
+
+            string url = "http://" + coworker + "/api/v1/rtc_clusters?"
+                + "vhost=" + req_->vhost + "&ip=" + req_->host + "&app=" + req_->app + "&stream=" + req_->stream
+                + "&coworker=" + coworker;
+
+            if ((err = SrsHttpHooks::discover_co_workers(url, host, port)) == srs_success) {
+                break;
+            }
+
+            srs_warn("discover coworkers failed, url=%s, err=%s", url.c_str(), srs_error_desc(err));
+            srs_freep(err);
+        }
     }
 
-    srs_trace("rtc forward quic connect to %s:%u success", ip.c_str(), port);
+    if (host.empty() || port == 0) {
+        return srs_error_new(ERROR_RTC_CLUSTER_REDIRECT, "no origin");
+    }
+
+    if ((err = quic_client->connect(host, port, timeout_)) != srs_success) {
+        return srs_error_wrap(err, "connect rtc upstream %s:%u failed", host.c_str(), port);
+    }
+
+    srs_trace("rtc forward quic connect to %s:%u success", host.c_str(), port);
 
     if ((err = quic_client->open_stream(&rtc_forward_stream)) != srs_success) {
         return srs_error_wrap(err, "open rtc_forward_stream %ld failed", rtc_forward_stream);
     }
 
-    return  err;
+    return err;
 }
 
 srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcStream* rtc_source)
@@ -252,23 +297,12 @@ srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client
     	    return srs_error_new(ERROR_RTC_FORWARD, "invalid body %s", rsp_json.c_str());
     	}
     	req = json->to_object();
-
-    	// Fetch params from req object.
-    	SrsJsonAny* prop = NULL;
-    	if ((prop = req->ensure_property_object("rtc_stream_description")) == NULL) {
-    	    return srs_error_new(ERROR_RTC_FORWARD, "json no found rtc_stream_description", rsp_json.c_str());
-    	}
-
-        // Deserialize rtc stream description into SrsRtcStreamDescription, 
-        // rtc play stream need negotiate to publish stream.
-        SrsJsonObject* obj = prop->to_object();
-        SrsRtcStreamDescription* stream_desc = new SrsRtcStreamDescription();
-        if ((err = stream_desc->from_json(obj)) != srs_success) {
-            return srs_error_wrap(err, "parse rtc_stream_description failed");
+        if ((err = rtc_source->from_json(req)) != srs_success) {
+            return srs_error_wrap(err, "unserialize rtc stream from json failed");
         }
 
-        rtc_source->set_stream_created();
-        rtc_source->set_stream_desc(stream_desc);
+        rtc_source->incr_forward_level();
+        srs_trace("rtc forward level=%d", rtc_source->get_forward_level());
     }
 
     srs_cond_signal(cond_waiting_sdp_);
@@ -280,6 +314,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
 {
     srs_error_t err = srs_success;
 
+    int __test = 0;
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "quic client io thread");
@@ -318,7 +353,6 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
 
     	char* p = pkt->wrap(rtp_data, body_len);
 
-        // TODO: FIXME: is it need to decode agagin?
     	SrsBuffer b(p, body_len);
     	if ((err = pkt->decode(&b)) != srs_success) {
     	    srs_error("decode rtp packet");
@@ -326,7 +360,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
             continue;
     	}
 
-        // TODO: FIXME
+        // TODO: FIXME: any better way to identify video or audio?
         if (pkt->header.get_ssrc() == rtc_source->get_stream_desc()->audio_track_desc_->ssrc_) {
             pkt->frame_type = SrsFrameTypeAudio;
         } else {
@@ -337,6 +371,17 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
             _srs_rtp_cache->recycle(pkt);
             return srs_error_wrap(err, "process rtp packet failed");
         }
+
+        if (rtc_source->can_stop_forward(30 * SRS_UTIME_SECONDS)) {
+            return srs_error_new(ERROR_RTC_NO_NEED_FORWARD, "no consumer, stop forward");
+        }
+
+        /*
+        if (++__test == 10000) {
+            srs_warn("break quic recv loop because of test");
+            return srs_error_new(ERROR_RTC_FORWARD, "test break");
+        }
+        */
 
         _srs_rtp_cache->recycle(pkt);
     }

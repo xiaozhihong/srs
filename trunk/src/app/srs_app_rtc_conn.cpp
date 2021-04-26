@@ -1000,6 +1000,7 @@ srs_error_t SrsRtcPublishStream::initialize(SrsRequest* r, SrsRtcStreamDescripti
         return srs_error_wrap(err, "create source");
     }
     source->set_publish_stream(this);
+    source->set_forward_level(0);
 
     return err;
 }

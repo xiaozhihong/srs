@@ -49,7 +49,7 @@
     </div>
 
     <label></label>
-    <video id="rtc_media_player" width="1280" autoplay muted></video>
+    <video id="rtc_media_player" width="800" autoplay muted></video>
 
     <label></label>
     SessionID: <span id='sessionid'></span>
@@ -97,7 +97,7 @@
                 self.pc.addTransceiver("video", {direction: "sendonly"});
 
                 var stream = await navigator.mediaDevices.getUserMedia(
-                    {audio: true, video: {height: {max: 720}}}
+                    {audio: true, video: {height: {max: 600}}}
                 );
                 // @see https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/addStream#Migrating_to_addTrack
                 stream.getTracks().forEach(function (track) {
