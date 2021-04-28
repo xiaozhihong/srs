@@ -68,8 +68,6 @@ private:
                 ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
                 uint8_t* token, const size_t tokenlen);
 public:
-    virtual std::string get_connid();
-public:
   	bool is_alive();
 // Interface ISrsDisposingHandler
 public:

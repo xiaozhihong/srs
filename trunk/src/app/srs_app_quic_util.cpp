@@ -39,6 +39,49 @@ using namespace std;
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_transport.hpp>
 
+string quic_conn_id_dump(const uint8_t* data, const size_t len)
+{
+    char capacity[256];
+    char* buf = capacity;
+    int size = 0;
+    for (size_t i = 0; i < len; ++i) {
+        int nb = snprintf(buf, sizeof(capacity), "%02x", data[i]);
+        if (nb < 0)
+            break;
+
+        buf += nb;
+        size += nb;
+    }
+
+    return string(capacity, size);
+}
+
+string quic_conn_id_dump(const string& connid)
+{
+    return quic_conn_id_dump(reinterpret_cast<const uint8_t*>(connid.data()), connid.size());
+}
+
+uint32_t generate_reserved_version(const sockaddr *sa, socklen_t salen, uint32_t version)
+{
+    uint32_t h = 0x811C9DC5u;
+    const uint8_t *p = reinterpret_cast<const uint8_t*>(sa);
+    const uint8_t *ep = p + salen;
+    for (; p != ep; ++p) {
+        h ^= *p;
+        h *= 0x01000193u;
+    }
+    version = htonl(version);
+    p = reinterpret_cast<const uint8_t*>(&version);
+    ep = p + sizeof(version);
+    for (; p != ep; ++p) {
+        h ^= *p;
+        h *= 0x01000193u;
+    }
+    h &= 0xF0F0F0F0u;
+    h |= 0x0A0A0A0Au;
+    return h;
+}
+
 ngtcp2_crypto_aead crypto_aead_aes_128_gcm()
 {
   	ngtcp2_crypto_aead aead;

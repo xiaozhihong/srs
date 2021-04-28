@@ -35,6 +35,11 @@
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
 
+// Dump quic conn in hex format.
+extern std::string quic_conn_id_dump(const uint8_t* data, const size_t len);
+extern std::string quic_conn_id_dump(const std::string& connid);
+
+extern uint32_t generate_reserved_version(const sockaddr *sa, socklen_t salen, uint32_t version);
 
 // Lib ngtcp2  log handle.
 extern void ngtcp2_log_handle(void *user_data, const char *fmt, ...);

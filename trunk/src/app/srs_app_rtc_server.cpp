@@ -362,7 +362,7 @@ srs_error_t SrsRtcServer::listen_udp()
 
     int nn_listeners = _srs_config->get_rtc_server_reuseport();
     for (int i = 0; i < nn_listeners; i++) {
-        SrsUdpMuxListener* listener = new SrsUdpMuxListener(this, ip, port);
+        SrsUdpMuxListener* listener = new SrsUdpMuxListener(this, ip, port, "RTC");
 
         if ((err = listener->listen()) != srs_success) {
             srs_freep(listener);

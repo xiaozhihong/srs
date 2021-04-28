@@ -201,15 +201,6 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
     return err;
 }
 
-std::string SrsQuicConnection::get_connid()
-{
-    if (conn_ == NULL) {
-        return "";
-    }
-
-    return string(reinterpret_cast<const char*>(scid_.data), scid_.datalen);
-}
-
 bool SrsQuicConnection::is_alive()
 {
     return true;

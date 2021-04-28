@@ -95,80 +95,87 @@ ISrsTcpHandler::~ISrsTcpHandler()
 {
 }
 
-SrsUdpListener::SrsUdpListener(ISrsUdpHandler* h, string i, int p)
+SrsUdpListenerBase::SrsUdpListenerBase(string i, int p)
 {
-    handler = h;
     ip = i;
     port = p;
     lfd = NULL;
     
     nb_buf = SRS_UDP_MAX_PACKET_SIZE;
     buf = new char[nb_buf];
-    
+}
+
+SrsUdpListenerBase::~SrsUdpListenerBase()
+{
+    srs_close_stfd(lfd);
+    srs_freepa(buf);
+}
+
+int SrsUdpListenerBase::fd()
+{
+    return srs_netfd_fileno(lfd);
+}
+
+srs_netfd_t SrsUdpListenerBase::stfd()
+{
+    return lfd;
+}
+
+void SrsUdpListenerBase::set_socket_buffer()
+{
+    srs_error_t err = srs_success;
+    int default_sndbuf = 0;
+    if ((err = srs_fd_get_sndbuf(fd(), default_sndbuf)) != srs_success) {
+        srs_warn("get sndbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    int expect_sndbuf = 10 * 1024 * 1024;
+    if ((err = srs_fd_set_sndbuf(fd(), expect_sndbuf)) != srs_success) {
+        srs_warn("set sndbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    int actual_sndbuf = 0;
+    if ((err = srs_fd_get_sndbuf(fd(), actual_sndbuf)) != srs_success) {
+        srs_warn("set sndbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    int default_rcvbuf = 0;
+    if ((err = srs_fd_get_rcvbuf(fd(), default_rcvbuf)) != srs_success) {
+        srs_warn("set rcvbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    int expect_rcvbuf = 10 * 1024 * 1024;
+    if ((err = srs_fd_set_rcvbuf(fd(), expect_rcvbuf)) != srs_success) {
+        srs_warn("set rcvbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    int actual_rcvbuf = 0;
+    if ((err = srs_fd_get_rcvbuf(fd(), actual_rcvbuf)) != srs_success) {
+        srs_warn("set rcvbuf failed,err=%s", srs_error_desc(err).c_str());
+        srs_freep(err);
+    }
+
+    srs_trace("UDP #%d LISTEN at %s:%d, SO_SNDBUF(default=%d, expect=%d, actual=%d), SO_RCVBUF(default=%d, expect=%d, actual=%d)",
+        fd(), ip.c_str(), port, default_sndbuf, expect_sndbuf, actual_sndbuf, default_rcvbuf, expect_rcvbuf, actual_rcvbuf);
+}
+
+
+SrsUdpListener::SrsUdpListener(ISrsUdpHandler* h, string i, int p)
+    : SrsUdpListenerBase(i, p)
+{
+    handler = h;
     trd = new SrsDummyCoroutine();
 }
 
 SrsUdpListener::~SrsUdpListener()
 {
     srs_freep(trd);
-    srs_close_stfd(lfd);
-    srs_freepa(buf);
 }
-
-int SrsUdpListener::fd()
-{
-    return srs_netfd_fileno(lfd);
-}
-
-srs_netfd_t SrsUdpListener::stfd()
-{
-    return lfd;
-}
-
-void SrsUdpListener::set_socket_buffer()
-{
-    int default_sndbuf = 0;
-    // TODO: FIXME: Config it.
-    int expect_sndbuf = 1024*1024*10; // 10M
-    int actual_sndbuf = expect_sndbuf;
-    int r0_sndbuf = 0;
-    if (true) {
-        socklen_t opt_len = sizeof(default_sndbuf);
-        // TODO: FIXME: check err
-        getsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&default_sndbuf, &opt_len);
-
-        if ((r0_sndbuf = setsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&actual_sndbuf, sizeof(actual_sndbuf))) < 0) {
-            srs_warn("set SO_SNDBUF failed, expect=%d, r0=%d", expect_sndbuf, r0_sndbuf);
-        }
-
-        opt_len = sizeof(actual_sndbuf);
-        // TODO: FIXME: check err
-        getsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&actual_sndbuf, &opt_len);
-    }
-
-    int default_rcvbuf = 0;
-    // TODO: FIXME: Config it.
-    int expect_rcvbuf = 1024*1024*10; // 10M
-    int actual_rcvbuf = expect_rcvbuf;
-    int r0_rcvbuf = 0;
-    if (true) {
-        socklen_t opt_len = sizeof(default_rcvbuf);
-        // TODO: FIXME: check err
-        getsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&default_rcvbuf, &opt_len);
-
-        if ((r0_rcvbuf = setsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&actual_rcvbuf, sizeof(actual_rcvbuf))) < 0) {
-            srs_warn("set SO_RCVBUF failed, expect=%d, r0=%d", expect_rcvbuf, r0_rcvbuf);
-        }
-
-        opt_len = sizeof(actual_rcvbuf);
-        // TODO: FIXME: check err
-        getsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&actual_rcvbuf, &opt_len);
-    }
-
-    srs_trace("UDP #%d LISTEN at %s:%d, SO_SNDBUF(default=%d, expect=%d, actual=%d, r0=%d), SO_RCVBUF(default=%d, expect=%d, actual=%d, r0=%d)",
-        srs_netfd_fileno(lfd), ip.c_str(), port, default_sndbuf, expect_sndbuf, actual_sndbuf, r0_sndbuf, default_rcvbuf, expect_rcvbuf, actual_rcvbuf, r0_rcvbuf);
-}
-
 
 srs_error_t SrsUdpListener::listen()
 {
@@ -494,16 +501,12 @@ SrsUdpMuxSocket* SrsUdpMuxSocket::copy_sendonly()
     return sendonly;
 }
 
-SrsUdpMuxListener::SrsUdpMuxListener(ISrsUdpMuxHandler* h, std::string i, int p)
+SrsUdpMuxListener::SrsUdpMuxListener(ISrsUdpMuxHandler* h, std::string i, int p, const string& type_name)
+    : SrsUdpListenerBase(i, p)
 {
     handler = h;
 
-    ip = i;
-    port = p;
-    lfd = NULL;
-    
-    nb_buf = SRS_UDP_MAX_PACKET_SIZE;
-    buf = new char[nb_buf];
+    type_name_ = type_name;
 
     trd = new SrsDummyCoroutine();
     cid = _srs_context->generate_id();
@@ -514,16 +517,6 @@ SrsUdpMuxListener::~SrsUdpMuxListener()
     srs_freep(trd);
     srs_close_stfd(lfd);
     srs_freepa(buf);
-}
-
-int SrsUdpMuxListener::fd()
-{
-    return srs_netfd_fileno(lfd);
-}
-
-srs_netfd_t SrsUdpMuxListener::stfd()
-{
-    return lfd;
 }
 
 srs_error_t SrsUdpMuxListener::listen()
@@ -541,46 +534,6 @@ srs_error_t SrsUdpMuxListener::listen()
     }
     
     return err;
-}
-
-void SrsUdpMuxListener::set_socket_buffer()
-{
-    int default_sndbuf = 0;
-    // TODO: FIXME: Config it.
-    int expect_sndbuf = 1024*1024*10; // 10M
-    int actual_sndbuf = expect_sndbuf;
-    int r0_sndbuf = 0;
-    if (true) {
-        socklen_t opt_len = sizeof(default_sndbuf);
-        getsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&default_sndbuf, &opt_len);
-
-        if ((r0_sndbuf = setsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&actual_sndbuf, sizeof(actual_sndbuf))) < 0) {
-            srs_warn("set SO_SNDBUF failed, expect=%d, r0=%d", expect_sndbuf, r0_sndbuf);
-        }
-
-        opt_len = sizeof(actual_sndbuf);
-        getsockopt(fd(), SOL_SOCKET, SO_SNDBUF, (void*)&actual_sndbuf, &opt_len);
-    }
-
-    int default_rcvbuf = 0;
-    // TODO: FIXME: Config it.
-    int expect_rcvbuf = 1024*1024*10; // 10M
-    int actual_rcvbuf = expect_rcvbuf;
-    int r0_rcvbuf = 0;
-    if (true) {
-        socklen_t opt_len = sizeof(default_rcvbuf);
-        getsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&default_rcvbuf, &opt_len);
-
-        if ((r0_rcvbuf = setsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&actual_rcvbuf, sizeof(actual_rcvbuf))) < 0) {
-            srs_warn("set SO_RCVBUF failed, expect=%d, r0=%d", expect_rcvbuf, r0_rcvbuf);
-        }
-
-        opt_len = sizeof(actual_rcvbuf);
-        getsockopt(fd(), SOL_SOCKET, SO_RCVBUF, (void*)&actual_rcvbuf, &opt_len);
-    }
-
-    srs_trace("UDP #%d LISTEN at %s:%d, SO_SNDBUF(default=%d, expect=%d, actual=%d, r0=%d), SO_RCVBUF(default=%d, expect=%d, actual=%d, r0=%d)",
-        srs_netfd_fileno(lfd), ip.c_str(), port, default_sndbuf, expect_sndbuf, actual_sndbuf, r0_sndbuf, default_rcvbuf, expect_rcvbuf, actual_rcvbuf, r0_rcvbuf);
 }
 
 srs_error_t SrsUdpMuxListener::cycle()
@@ -667,8 +620,8 @@ srs_error_t SrsUdpMuxListener::cycle()
                 pps_unit = "(k)"; pps_last /= 10000; pps_average /= 10000;
             }
 
-            srs_trace("<- RTC RECV #%d, udp %" PRId64 ", pps %d/%d%s, schedule %" PRId64,
-                srs_netfd_fileno(lfd), nn_msgs_stage, pps_average, pps_last, pps_unit.c_str(), nn_loop);
+            srs_trace("<- %s RECV #%d, udp %" PRId64 ", pps %d/%d%s, schedule %" PRId64,
+                type_name_.c_str(), srs_netfd_fileno(lfd), nn_msgs_stage, pps_average, pps_last, pps_unit.c_str(), nn_loop);
             nn_msgs_last = nn_msgs; time_last = srs_get_system_time();
             nn_loop = 0; nn_msgs_stage = 0;
         }

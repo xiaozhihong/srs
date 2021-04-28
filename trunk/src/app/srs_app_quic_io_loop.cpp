@@ -43,49 +43,6 @@ using namespace std;
 
 const size_t kSvScidLen = 18;
 
-static string quic_conn_id_dump(const uint8_t* data, const size_t len)
-{
-    char capacity[256];
-    char* buf = capacity;
-    int size = 0;
-    for (size_t i = 0; i < len; ++i) {
-        int nb = snprintf(buf, sizeof(capacity), "%02x", data[i]);
-        if (nb < 0)
-            break;
-
-        buf += nb;
-        size += nb;
-    }
-
-    return string(capacity, size);
-}
-
-static string quic_conn_id_dump(const string& connid)
-{
-    return quic_conn_id_dump(reinterpret_cast<const uint8_t*>(connid.data()), connid.size());
-}
-
-static uint32_t generate_reserved_version(const sockaddr *sa, socklen_t salen, uint32_t version) 
-{
-  	uint32_t h = 0x811C9DC5u;
-  	const uint8_t *p = reinterpret_cast<const uint8_t*>(sa);
-  	const uint8_t *ep = p + salen;
-  	for (; p != ep; ++p) {
-  	  	h ^= *p;
-  	  	h *= 0x01000193u;
-  	}
-  	version = htonl(version);
-  	p = reinterpret_cast<const uint8_t*>(&version);
-  	ep = p + sizeof(version);
-  	for (; p != ep; ++p) {
-  	  	h ^= *p;
-  	  	h *= 0x01000193u;
-  	}
-  	h &= 0xF0F0F0F0u;
-  	h |= 0x0A0A0A0Au;
-  	return h;
-}
-
 SrsQuicListener::SrsQuicListener(ISrsQuicHandler* handler, SrsQuicListenerType type)
 {
     handler_ = handler;
@@ -107,7 +64,7 @@ srs_error_t SrsQuicListener::listen(const string& ip, int port)
         return srs_error_new(ERROR_QUIC_SERVER, "invalid addr=%s", ip.c_str());
     }
 
-    SrsUdpMuxListener* listener = new SrsUdpMuxListener(this, ip, port);
+    SrsUdpMuxListener* listener = new SrsUdpMuxListener(this, ip, port, "QUIC");
     if ((err = listener->listen()) != srs_success) {
         srs_freep(listener);
         return srs_error_wrap(err, "listen %s:%d", ip.c_str(), port);
@@ -286,7 +243,7 @@ srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener*
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
     }
-    string conn_id = quic_conn->get_connid();
+    string conn_id = quic_conn->get_conn_id();
     srs_trace("add new quic connection=%s", quic_conn_id_dump(conn_id).c_str());
     quic_conn_map_->add_with_name(conn_id, quic_conn);
     *p_conn = quic_conn;

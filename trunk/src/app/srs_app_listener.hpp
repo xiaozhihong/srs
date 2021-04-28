@@ -84,8 +84,7 @@ public:
     virtual srs_error_t on_tcp_client(srs_netfd_t stfd) = 0;
 };
 
-// Bind udp port, start thread to recv packet and handler it.
-class SrsUdpListener : public ISrsCoroutineHandler
+class SrsUdpListenerBase
 {
 protected:
     srs_netfd_t lfd;
@@ -94,17 +93,28 @@ protected:
     char* buf;
     int nb_buf;
 protected:
-    ISrsUdpHandler* handler;
     std::string ip;
     int port;
 public:
-    SrsUdpListener(ISrsUdpHandler* h, std::string i, int p);
-    virtual ~SrsUdpListener();
+    SrsUdpListenerBase(std::string i, int p);
+    virtual ~SrsUdpListenerBase();
 public:
     virtual int fd();
     virtual srs_netfd_t stfd();
-private:
+protected:
     void set_socket_buffer();
+public:
+    virtual srs_error_t listen() = 0;
+};
+
+// Bind udp port, start thread to recv packet and handler it.
+class SrsUdpListener : public SrsUdpListenerBase, public ISrsCoroutineHandler
+{
+protected:
+    ISrsUdpHandler* handler;
+public:
+    SrsUdpListener(ISrsUdpHandler* h, std::string i, int p);
+    virtual ~SrsUdpListener();
 public:
     virtual srs_error_t listen();
 // Interface ISrsReusableThreadHandler.
@@ -178,32 +188,21 @@ public:
     SrsUdpMuxSocket* copy_sendonly();
 };
 
-class SrsUdpMuxListener : public ISrsCoroutineHandler
+class SrsUdpMuxListener : public SrsUdpListenerBase, public ISrsCoroutineHandler
 {
 private:
-    srs_netfd_t lfd;
-    SrsCoroutine* trd;
     SrsContextId cid;
-private:
-    char* buf;
-    int nb_buf;
+    std::string type_name_;
 private:
     ISrsUdpMuxHandler* handler;
-    std::string ip;
-    int port;
 public:
-    SrsUdpMuxListener(ISrsUdpMuxHandler* h, std::string i, int p);
+    SrsUdpMuxListener(ISrsUdpMuxHandler* h, std::string i, int p, const std::string& type_name);
     virtual ~SrsUdpMuxListener();
-public:
-    virtual int fd();
-    virtual srs_netfd_t stfd();
 public:
     virtual srs_error_t listen();
 // Interface ISrsReusableThreadHandler.
 public:
     virtual srs_error_t cycle();
-private:
-    void set_socket_buffer();
 };
 
 #endif

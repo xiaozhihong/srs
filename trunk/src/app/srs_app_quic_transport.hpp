@@ -124,6 +124,7 @@ public:
     srs_error_t on_data(ngtcp2_path* path, const uint8_t* data, size_t size);
     ngtcp2_conn* conn() { return conn_; }
     std::string get_conn_id();
+    std::string get_conn_name();
     void wait_stream_writeable(int64_t stream_id);
     SrsQuicError get_last_error() const { return last_err_; }
     void set_block(bool block) { block_ = block; }

@@ -184,7 +184,7 @@ int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
                 return -1;
             }
 
-            srs_trace("before block, quic stat=%s", dump_quic_conn_stat(quic_transport_->conn()).c_str());
+            srs_trace("before block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
             quic_transport_->set_block(true);
             if (wait_writeable(timeout) != 0) {
                 quic_transport_->set_last_error(SrsQuicErrorTimeout);
@@ -192,7 +192,7 @@ int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
                 return -1;
             }
             quic_transport_->set_block(false);
-            srs_trace("after block, quic stat=%s", dump_quic_conn_stat(quic_transport_->conn()).c_str());
+            srs_trace("after block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
         }
 
         offset += packet_size;
@@ -394,6 +394,11 @@ std::string SrsQuicTransport::get_conn_id()
     return string(reinterpret_cast<const char*>(scid_.data), scid_.datalen);
 }
 
+std::string SrsQuicTransport::get_conn_name()
+{
+    return quic_conn_id_dump(get_conn_id());
+}
+
 void SrsQuicTransport::wait_stream_writeable(int64_t stream_id)
 {
     stream_waiting_writeable_.insert(stream_id);
@@ -504,7 +509,7 @@ int SrsQuicTransport::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint
 int SrsQuicTransport::acked_stream_data_offset(int64_t stream_id, uint64_t offset, uint64_t datalen) 
 {
     if (block_) {
-        srs_trace("streamid=%ld, acked offset=%u, datalen=%lu", stream_id, offset, datalen);
+        srs_trace("quic conn %s, streamid=%ld, acked offset=%u, datalen=%lu", get_conn_name().c_str(), stream_id, offset, datalen);
     }
     notify_stream_writeable(stream_id);
     return 0;
@@ -533,7 +538,6 @@ int SrsQuicTransport::recv_crypto_data(ngtcp2_crypto_level crypto_level, const u
 int SrsQuicTransport::recv_stream_data(uint32_t flags, int64_t stream_id, uint64_t offset, 
         const uint8_t *data, size_t datalen)
 {
-    srs_verbose("recv steram %ld %u bytes data, offset=%lu", stream_id, datalen, offset);
     // Quic stream level flow control.
     ngtcp2_conn_extend_max_stream_offset(conn_, stream_id, datalen);
     ngtcp2_conn_extend_max_offset(conn_, datalen);
@@ -611,9 +615,8 @@ int SrsQuicTransport::remove_connection_id(const ngtcp2_cid *cid)
 int SrsQuicTransport::extend_max_stream_data(int64_t stream_id, uint64_t max_data)
 {
     if (block_) {
-        srs_trace("streamid=%ld, extend max_data=%lu", stream_id, max_data);
+        srs_trace("quic conn %s, streamid=%ld, extend max_data=%lu", get_conn_name().c_str(), stream_id, max_data);
     }
-    // notify_stream_writeable(stream_id);
     return 0;
 }
 
