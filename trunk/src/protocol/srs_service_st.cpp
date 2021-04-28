@@ -146,6 +146,44 @@ srs_error_t srs_fd_keepalive(int fd)
     return srs_success;
 }
 
+srs_error_t srs_fd_set_sndbuf(int fd, int expect_sndbuf)
+{
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void*)&expect_sndbuf, sizeof(expect_sndbuf)) == -1) {
+        return srs_error_new(ERROR_SOCKET_SNDBUF, "SO_SNDBUF fd=%d", fd);
+    }
+
+    return srs_success;
+}
+
+srs_error_t srs_fd_get_sndbuf(int fd, int& actual_sndbuf)
+{
+    socklen_t opt_len = sizeof(actual_sndbuf);
+    if (getsockopt(fd, SOL_SOCKET, SO_SNDBUF, (void*)&actual_sndbuf, &opt_len) == -1) {
+        return srs_error_new(ERROR_SOCKET_SNDBUF, "SO_SNDBUF fd=%d", fd);
+    }
+
+    return srs_success;
+}
+
+srs_error_t srs_fd_set_rcvbuf(int fd, int expect_rcvbuf)
+{
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void*)&expect_rcvbuf, sizeof(expect_rcvbuf)) == -1) {
+        return srs_error_new(ERROR_SOCKET_RCVBUF, "SO_RCVBUF fd=%d", fd);
+    }
+
+    return srs_success;
+}
+
+srs_error_t srs_fd_get_rcvbuf(int fd, int& actual_rcvbuf)
+{
+    socklen_t opt_len = sizeof(actual_rcvbuf);
+    if (getsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void*)&actual_rcvbuf, &opt_len) == -1) {
+        return srs_error_new(ERROR_SOCKET_RCVBUF, "SO_RCVBUF fd=%d", fd);
+    }
+
+    return srs_success;
+}
+
 srs_thread_t srs_thread_self()
 {
     return (srs_thread_t)st_thread_self();

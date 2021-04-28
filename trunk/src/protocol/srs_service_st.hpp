@@ -55,6 +55,18 @@ extern srs_error_t srs_fd_reuseport(int fd);
 // Set the SO_KEEPALIVE of fd.
 extern srs_error_t srs_fd_keepalive(int fd);
 
+// Set the SO_SNDBUF of fd.
+extern srs_error_t srs_fd_set_sndbuf(int fd, int expect_sndbuf);
+
+// Get the SO_SNDBUF of fd.
+extern srs_error_t srs_fd_get_sndbuf(int fd, int& actual_sndbuf);
+
+// Set the SO_RCVBUF of fd.
+extern srs_error_t srs_fd_set_rcvbuf(int fd, int expect_rcvbuf);
+
+// Get the SO_RCVBUF of fd.
+extern srs_error_t srs_fd_get_rcvbuf(int fd, int& actual_rcvbuf);
+
 // Get current coroutine/thread.
 extern srs_thread_t srs_thread_self();
 extern void srs_thread_exit(void* retval);

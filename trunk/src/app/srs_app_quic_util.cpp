@@ -37,6 +37,7 @@ using namespace std;
 #include <srs_service_st.hpp>
 #include <srs_protocol_utility.hpp>
 #include <srs_app_quic_tls.hpp>
+#include <srs_app_quic_transport.hpp>
 
 ngtcp2_crypto_aead crypto_aead_aes_128_gcm()
 {
@@ -54,6 +55,11 @@ ngtcp2_crypto_md crypto_md_sha256()
 
 void ngtcp2_log_handle(void *user_data, const char *fmt, ...) 
 {
+    SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
+    if (! quic_transport->get_block()) {
+        return;
+    }
+
     va_list ap;
 
     static char buf[1024*12];
@@ -62,13 +68,18 @@ void ngtcp2_log_handle(void *user_data, const char *fmt, ...)
     va_end(ap);
 
     // TODO: FIXME: config if we log ngtcp2 quic log
-    srs_verbose("ngtcp2 quic log # %s", buf);
+    srs_trace("ngtcp2 quic log # %s", buf);
 }
 
 void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen)
 {
+    SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
+    if (! quic_transport->get_block()) {
+        return;
+    }
+
     // TODO: FIXME: config if we log qlog
-    srs_verbose("QLOG # %s", string(reinterpret_cast<const char*>(data), datalen).c_str());
+    srs_trace("QLOG # %s", string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
 string dump_quic_conn_stat(ngtcp2_conn* conn)

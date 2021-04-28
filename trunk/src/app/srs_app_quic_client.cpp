@@ -141,6 +141,38 @@ srs_error_t SrsQuicClient::create_udp_socket()
 
     udp_fd_ = srs_netfd_open_socket(fd);
 
+    if (true) {
+        int except_sndbuf = 10 * 1024 * 1024;
+        if ((err = srs_fd_set_sndbuf(fd, except_sndbuf)) != srs_success) {
+            srs_warn("set sndbuf failed,err=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+
+        int actual_sndbuf = 0;
+        if ((err = srs_fd_get_sndbuf(fd, actual_sndbuf)) != srs_success) {
+            srs_warn("set sndbuf failed,err=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+
+        srs_trace("fd=%d, except_sndbuf=%d, actual_sndbuf=%d", fd, except_sndbuf, actual_sndbuf);
+    }
+
+    if (true) {
+        int except_rcvbuf = 10 * 1024 * 1024;
+        if ((err = srs_fd_set_rcvbuf(fd, except_rcvbuf)) != srs_success) {
+            srs_warn("set rcvbuf failed,err=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+
+        int actual_rcvbuf = 0;
+        if ((err = srs_fd_get_rcvbuf(fd, actual_rcvbuf)) != srs_success) {
+            srs_warn("set rcvbuf failed,err=%s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
+
+        srs_trace("fd=%d, except_rcvbuf=%d, actual_rcvbuf=%d", fd, except_rcvbuf, actual_rcvbuf);
+    }
+
 	return err;
 }
 
@@ -255,13 +287,13 @@ srs_error_t SrsQuicClient::cycle()
 {
    	srs_error_t err = srs_success;
 
+    uint8_t buf[1600];
+    int nb_buf = sizeof(buf);
+
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "quic client io thread");
         }
-
-        uint8_t buf[1600];
-        int nb_buf = sizeof(buf);
 
         int nread = srs_recvfrom(udp_fd_, buf, nb_buf, (sockaddr*)&remote_addr_, (int*)&remote_addr_len_, SRS_UTIME_NO_TIMEOUT);
         if (nread  <= 0) {

@@ -126,6 +126,8 @@ public:
     std::string get_conn_id();
     void wait_stream_writeable(int64_t stream_id);
     SrsQuicError get_last_error() const { return last_err_; }
+    void set_block(bool block) { block_ = block; }
+    bool get_block() const { return block_; }
 private:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
@@ -217,6 +219,8 @@ protected:
     std::set<int64_t> stream_waiting_writeable_;
     srs_cond_t accept_stream_cond_;
     std::deque<int64_t> wait_accept_streams_;
+private:
+    bool block_;
 };
 
 #endif

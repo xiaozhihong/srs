@@ -184,11 +184,15 @@ int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
                 return -1;
             }
 
+            srs_trace("before block, quic stat=%s", dump_quic_conn_stat(quic_transport_->conn()).c_str());
+            quic_transport_->set_block(true);
             if (wait_writeable(timeout) != 0) {
                 quic_transport_->set_last_error(SrsQuicErrorTimeout);
                 srs_error("write stream %ld timeout", stream_id_);
                 return -1;
             }
+            quic_transport_->set_block(false);
+            srs_trace("after block, quic stat=%s", dump_quic_conn_stat(quic_transport_->conn()).c_str());
         }
 
         offset += packet_size;
@@ -263,6 +267,7 @@ int SrsQuicStream::notify_readable()
 
 void SrsQuicStream::on_close(SrsQuicTransport* transport)
 {
+    srs_trace("@john, transport=%p, quic_transport_=%p", transport, quic_transport_);
     srs_assert(transport == quic_transport_);
 
     // Notify st-thread which waiting read result.
@@ -271,13 +276,15 @@ void SrsQuicStream::on_close(SrsQuicTransport* transport)
 
 SrsQuicTransport::SrsQuicTransport()
 {
-    timer_ = new SrsHourGlass("quic", this, 1 * SRS_UTIME_MILLISECONDS);
+    timer_ = new SrsHourGlass("quic", this, 10 * SRS_UTIME_MILLISECONDS);
     conn_ = NULL;
     udp_fd_ = NULL;
     local_addr_len_ = 0;
     remote_addr_len_ = 0;
     tls_session_ = NULL;
     accept_stream_cond_ = srs_cond_new();
+
+    block_ = false;
 
     cb_.client_initial = ngtcp2_crypto_client_initial_cb;
     cb_.recv_client_initial = ngtcp2_crypto_recv_client_initial_cb;
@@ -408,7 +415,8 @@ srs_error_t SrsQuicTransport::update_quic_driver_timer()
     ngtcp2_tstamp now = srs_get_system_time_for_quic();
 
     int64_t delta_ms = expiry < now ? 1 : (expiry - now) /  NGTCP2_MILLISECONDS;
-    if (delta_ms <= 0 || delta_ms > 10) {
+    delta_ms = ((delta_ms - 1) / 10 + 1) * 10;
+    if (delta_ms <= 0) {
         delta_ms = 10;
     }
 
@@ -495,6 +503,10 @@ int SrsQuicTransport::acked_crypto_offset(ngtcp2_crypto_level crypto_level, uint
 
 int SrsQuicTransport::acked_stream_data_offset(int64_t stream_id, uint64_t offset, uint64_t datalen) 
 {
+    if (block_) {
+        srs_trace("streamid=%ld, acked offset=%u, datalen=%lu", stream_id, offset, datalen);
+    }
+    notify_stream_writeable(stream_id);
     return 0;
 }
 
@@ -598,7 +610,10 @@ int SrsQuicTransport::remove_connection_id(const ngtcp2_cid *cid)
 
 int SrsQuicTransport::extend_max_stream_data(int64_t stream_id, uint64_t max_data)
 {
-    notify_stream_writeable(stream_id);
+    if (block_) {
+        srs_trace("streamid=%ld, extend max_data=%lu", stream_id, max_data);
+    }
+    // notify_stream_writeable(stream_id);
     return 0;
 }
 
