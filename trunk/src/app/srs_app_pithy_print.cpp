@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 Winlin
+ * Copyright (c) 2013-2021 Winlin
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -163,6 +163,33 @@ bool SrsErrorPithyPrint::can_print(int error_code, uint32_t* pnn)
     ticks[error_code] = srs_get_system_time();
 
     return new_stage || stage->can_print();
+}
+
+SrsAlonePithyPrint::SrsAlonePithyPrint() : info_(0)
+{
+    //stage work for one print
+    info_.nb_clients = 1;
+
+    previous_tick_ = srs_get_system_time();
+}
+
+SrsAlonePithyPrint::~SrsAlonePithyPrint()
+{
+}
+
+void SrsAlonePithyPrint::elapse()
+{
+    srs_utime_t diff = srs_get_system_time() - previous_tick_;
+    previous_tick_ = srs_get_system_time();
+
+    diff = srs_max(0, diff);
+
+    info_.elapse(diff);
+}
+
+bool SrsAlonePithyPrint::can_print()
+{
+    return info_.can_print();
 }
 
 // The global stage manager for pithy print, multiple stages.

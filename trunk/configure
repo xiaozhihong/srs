@@ -57,14 +57,11 @@ __mfiles=`find modules -name "config"` && for __mfile in $__mfiles; do
 done
 
 # variables for makefile for all modules.
-__mphonys="" && __mdefaults="" && __mcleanups="" && __makefiles=""
+__mphonys="" && __mdefaults="" && __mcleanups=""
 # add each modules for application
 for SRS_MODULE in ${SRS_MODULES[*]}; do
     echo "install module at: $SRS_MODULE"
-    . $SRS_MODULE/config
-    if [[ $SRS_MODULE_MAKEFILE != "" ]]; then
-        __makefiles="$__makefiles $SRS_MODULE_MAKEFILE"
-    fi
+    . auto/reset_module.sh && . $SRS_MODULE/config
     if [[ 0 -ne ${#SRS_MODULE_MAIN[@]} ]]; then
         __mphonys="$__mphonys $SRS_MODULE_NAME"
         __mdefaults="$__mdefaults $SRS_MODULE_NAME"
@@ -318,7 +315,7 @@ fi
 DEFINES=""
 # add each modules for app
 for SRS_MODULE in ${SRS_MODULES[*]}; do
-    . $SRS_MODULE/config
+    . auto/reset_module.sh && . $SRS_MODULE/config
     MODULE_FILES+=("${SRS_MODULE_APP[*]}")
     DEFINES="${DEFINES} ${SRS_MODULE_DEFINES}"
 done
@@ -350,7 +347,7 @@ SERVER_OBJS="${MODULE_OBJS[@]}"
 #
 #Main Module, for app from modules.
 MODULE_ID="MAIN"
-MODULE_DEPENDS=("CORE" "KERNEL" "PROTOCOL")
+MODULE_DEPENDS=("CORE" "KERNEL" "PROTOCOL" "APP")
 ModuleLibIncs=(${SRS_OBJS_DIR} ${LibSTRoot} ${LibGperfRoot} ${LibSSLRoot})
 if [[ $SRS_RTC == YES ]]; then
     ModuleLibIncs+=(${LibSrtpRoot})
@@ -365,7 +362,7 @@ MODULE_FILES=()
 DEFINES=""
 # add each modules for main
 for SRS_MODULE in ${SRS_MODULES[*]}; do
-    . $SRS_MODULE/config
+    . auto/reset_module.sh && . $SRS_MODULE/config
     MODULE_FILES+=("${SRS_MODULE_MAIN[*]}")
     DEFINES="${DEFINES} ${SRS_MODULE_DEFINES}"
 done
@@ -379,7 +376,7 @@ MAIN_OBJS="${MODULE_OBJS[@]}"
 # all main entrances
 MAIN_ENTRANCES=("srs_main_server")
 for SRS_MODULE in ${SRS_MODULES[*]}; do
-    . $SRS_MODULE/config
+    . auto/reset_module.sh && . $SRS_MODULE/config
     MAIN_ENTRANCES+=("${SRS_MODULE_MAIN[*]}")
 done
 #
@@ -420,8 +417,8 @@ LINK_OPTIONS="${SrsLinkOptions}${SrsGprofLink}${SrsGperfLink}"
 # srs: srs(simple rtmp server) over st(state-threads)
 BUILD_KEY="srs" APP_MAIN="srs_main_server" APP_NAME="srs" . auto/apps.sh
 #
-# For modules, without the app module.
-MODULE_OBJS="${CORE_OBJS[@]} ${KERNEL_OBJS[@]} ${PROTOCOL_OBJS[@]} ${MAIN_OBJS[@]}"
+# For modules, with the app module.
+MODULE_OBJS="${CORE_OBJS[@]} ${KERNEL_OBJS[@]} ${PROTOCOL_OBJS[@]} ${APP_OBJS[@]} ${MAIN_OBJS[@]}"
 ModuleLibFiles=(${LibSTfile} ${LibSSLfile} ${LibGperfFile})
 if [[ $SRS_RTC == YES ]]; then
     ModuleLibFiles+=(${LibSrtpFile})
@@ -429,12 +426,17 @@ fi
 if [[ $SRS_FFMPEG_FIT == YES ]]; then
     ModuleLibFiles+=("${LibFfmpegFile[*]}")
 fi
+
 if [[ $SRS_QUIC == YES ]]; then
     ModuleLibFiles+=(${LibNgtcp2File})
-  fi
-#
+fi
+
+if [[ $SRS_GB28181 == YES ]]; then
+    ModuleLibFiles+=("${LibIconvfile[*]}")
+fi
+
 for SRS_MODULE in ${SRS_MODULES[*]}; do
-    . $SRS_MODULE/config
+    . auto/reset_module.sh && . $SRS_MODULE/config
     # no SRS_MODULE_MAIN
     if [[ 0 -eq ${#SRS_MODULE_MAIN[@]} ]]; then continue; fi
     BUILD_KEY="$SRS_MODULE_NAME" APP_MAIN="${SRS_MODULE_MAIN[0]}" APP_NAME="$SRS_MODULE_NAME" . auto/apps.sh
@@ -476,6 +478,9 @@ if [ $SRS_UTEST = YES ]; then
     if [[ $SRS_SRT == YES ]]; then
         ModuleLibFiles+=("${LibSRTfile[*]}")
     fi
+    if [[ $SRS_GB28181 == YES ]]; then
+        ModuleLibFiles+=("${LibIconvfile[*]}")
+    fi
     MODULE_DEPENDS=("CORE" "KERNEL" "PROTOCOL" "APP")
     if [[ $SRS_SRT == YES ]]; then
         MODULE_DEPENDS+=("SRT")
@@ -498,8 +503,8 @@ mv ${SRS_WORKDIR}/${SRS_MAKEFILE} ${SRS_WORKDIR}/${SRS_MAKEFILE}.bk
 
 # generate phony header
 cat << END > ${SRS_WORKDIR}/${SRS_MAKEFILE}
-.PHONY: default _default install install-api help clean destroy server srs_ingest_hls utest _prepare_dir $__mphonys
-.PHONY: clean_srs clean_modules clean_openssl clean_nginx clean_cherrypy clean_srtp2 clean_opus clean_ffmpeg clean_st
+.PHONY: default _default install help clean destroy server srs_ingest_hls utest _prepare_dir $__mphonys
+.PHONY: clean_srs clean_modules clean_openssl clean_srtp2 clean_opus clean_ffmpeg clean_st
 .PHONY: st ffmpeg
 
 # install prefix.
@@ -513,18 +518,17 @@ END
 
 # the real entry for all platform:
 cat << END >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
-_default: server srs_ingest_hls utest __modules $__mdefaults
+_default: server srs_ingest_hls utest $__mdefaults
 	@bash objs/_srs_build_summary.sh
 
 help:
-	@echo "Usage: make <help>|<clean>|<destroy>|<server>|<utest>|<install>|<install-api>|<uninstall>"
+	@echo "Usage: make <help>|<clean>|<destroy>|<server>|<utest>|<install>|<uninstall>"
 	@echo "     help            Display this help menu"
 	@echo "     clean           Cleanup project and all depends"
 	@echo "     destroy         Cleanup all files for this platform in ${SRS_OBJS_DIR}/${SRS_PLATFORM}"
 	@echo "     server          Build the srs and other modules in main"
 	@echo "     utest           Build the utest for srs"
 	@echo "     install         Install srs to the prefix path"
-	@echo "     install-api     Install srs and api-server to the prefix path"
 	@echo "     uninstall       Uninstall srs from prefix path"
 	@echo "To rebuild special module:"
 	@echo "     st              Rebuild st-srs in ${SRS_OBJS_DIR}/${SRS_PLATFORM}/st-srs"
@@ -543,10 +547,8 @@ doclean:
 	(cd ${SRS_OBJS_DIR} && rm -rf srs srs_utest $__mcleanups)
 	(cd ${SRS_OBJS_DIR} && rm -rf src/* include lib)
 	(mkdir -p ${SRS_OBJS_DIR}/utest && cd ${SRS_OBJS_DIR}/utest && rm -rf *.o *.a)
-	(cd research/api-server/static-dir && rm -rf crossdomain.xml forward live players)
 
 clean: clean_srs clean_modules
-	@echo "You can clean each some components, see make help"
 
 destroy:
 	(cd ${SRS_OBJS_DIR} && rm -rf ${SRS_PLATFORM})
@@ -580,12 +582,6 @@ clean_st:
 	(cd ${SRS_OBJS_DIR}/${SRS_PLATFORM} && rm -rf st-srs)
 	@echo "Please rebuild ST by: ./configure"
 
-clean_nginx:
-	(cd ${SRS_OBJS_DIR} && rm -rf nginx)
-
-clean_cherrypy:
-	(cd research/api-server/static-dir && rm -rf crossdomain.xml forward live players)
-
 st:
 	(cd ${SRS_OBJS_DIR} && rm -f srs srs_utest)
 	(cd ${SRS_OBJS_DIR}/${SRS_PLATFORM}/st-srs && \$(MAKE) clean && \$(MAKE) ${_ST_MAKE} EXTRA_CFLAGS="${_ST_EXTRA_CFLAGS}")
@@ -598,23 +594,15 @@ ffmpeg:
 
 END
 
-# for Makefile of all modules.
-# depends on server, for some modules maybe use srs files.
-echo "__modules: server" >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
-for MMF in ${__makefiles[*]}; do
-    echo "	\$(MAKE) -f $MMF" >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
-done
-echo "" >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
-
 cat << END >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
 server: _prepare_dir
-	@echo "Build the srs(simple rtmp server) over ST(state-threads)"
+	@echo "Build the SRS server"
 	\$(MAKE) -f ${SRS_OBJS_DIR}/${SRS_MAKEFILE} srs
 
 END
 # generate all modules entry
 for SRS_MODULE in ${SRS_MODULES[*]}; do
-    . $SRS_MODULE/config
+    . auto/reset_module.sh && . $SRS_MODULE/config
     cat << END >> ${SRS_WORKDIR}/${SRS_MAKEFILE}
 $SRS_MODULE_NAME: _prepare_dir server
 	@echo "Build the $SRS_MODULE_NAME over SRS"
@@ -629,36 +617,16 @@ uninstall:
 	@echo "rmdir \$(SRS_PREFIX)"
 	@rm -rf \$(SRS_PREFIX)
 
-install-api: install
-	@echo "Now mkdir \$(__REAL_INSTALL)"
-	@mkdir -p \$(__REAL_INSTALL)
-	@echo "Now copy binary files"
-	@mkdir -p \$(__REAL_INSTALL)/research/api-server
-	@cp research/api-server/server.py \$(__REAL_INSTALL)/research/api-server
-	@mkdir -p \$(__REAL_INSTALL)/objs/ffmpeg/bin
-	@cp objs/ffmpeg/bin/ffmpeg \$(__REAL_INSTALL)/objs/ffmpeg/bin
-	@echo "Now copy html files"
-	@mkdir -p \$(__REAL_INSTALL)/research/api-server/static-dir/players
-	@cp research/api-server/static-dir/crossdomain.xml \$(__REAL_INSTALL)/research/api-server/static-dir
-	@cp research/api-server/static-dir/index.html \$(__REAL_INSTALL)/research/api-server/static-dir
-	@cp -r research/api-server/static-dir/players/* \$(__REAL_INSTALL)/research/api-server/static-dir/players
-	@echo "Now copy init.d script files"
-	@mkdir -p \$(__REAL_INSTALL)/etc/init.d
-	@cp etc/init.d/srs-api \$(__REAL_INSTALL)/etc/init.d
-	@sed -i "s|^ROOT=.*|ROOT=\"\$(SRS_PREFIX)\"|g" \$(__REAL_INSTALL)/etc/init.d/srs-api
-	@echo ""
-	@echo "The api installed, to link and start api:"
-	@echo "     sudo ln -sf \$(SRS_PREFIX)/etc/init.d/srs-api /etc/init.d/srs-api"
-	@echo "     /etc/init.d/srs-api start"
-	@echo "     http://\$(shell bash auto/local_ip.sh):8085"
-	@echo "@see: https://github.com/ossrs/srs/wiki/v1_CN_LinuxService"
-
 install:
 	@echo "Now mkdir \$(__REAL_INSTALL)"
 	@mkdir -p \$(__REAL_INSTALL)
 	@echo "Now make the http root dir"
 	@mkdir -p \$(__REAL_INSTALL)/objs/nginx/html
+	@cp -f research/api-server/static-dir/index.html \$(__REAL_INSTALL)/objs/nginx/html
 	@cp -f research/api-server/static-dir/crossdomain.xml \$(__REAL_INSTALL)/objs/nginx/html
+	@cp -f research/api-server/static-dir/favicon.ico \$(__REAL_INSTALL)/objs/nginx/html
+	@cp -Rf research/players \$(__REAL_INSTALL)/objs/nginx/html
+	@cp -Rf research/console \$(__REAL_INSTALL)/objs/nginx/html
 	@echo "Now copy binary files"
 	@mkdir -p \$(__REAL_INSTALL)/objs
 	@cp -f objs/srs \$(__REAL_INSTALL)/objs
@@ -856,20 +824,22 @@ done
 # Do cleanup when configure done.
 #####################################################################################
 if [[ $SRS_CLEAN == YES && -f Makefile ]]; then
-    echo "Do full cleanup, you can disable it by: --clean=off"
+    #echo "Do full cleanup, you can disable it by: --clean=off"
     make clean
 fi
 
 #####################################################################################
 # next step
 #####################################################################################
-echo ""
-echo "You can run 3rdparty applications:"
-if [ $SRS_HTTP_CALLBACK = YES ]; then
-    echo -e "\" python ./research/api-server/server.py 8085  \" to start the api-server"
+if [[ $SRS_CHERRYPY == YES ]]; then
+  echo ""
+  echo "You can run 3rdparty applications:"
+  if [ $SRS_HTTP_CALLBACK = YES ]; then
+      echo -e "\" python ./research/api-server/server.py 8085  \" to start the api-server"
+  fi
 fi
 echo ""
 echo "You can build SRS:"
-echo "\" make \" to build the srs(simple rtmp server)."
-echo "\" make help \" to get the usage of make"
+echo "\" make \" to build the SRS server"
+echo "\" make help \" to get some help"
 

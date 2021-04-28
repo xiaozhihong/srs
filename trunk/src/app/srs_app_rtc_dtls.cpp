@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 Winlin
+ * Copyright (c) 2013-2021 Winlin
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -961,10 +961,63 @@ bool SrsDtlsServerImpl::is_dtls_client()
     return false;
 }
 
+SrsDtlsEmptyImpl::SrsDtlsEmptyImpl() : SrsDtlsImpl(NULL)
+{
+    handshake_done_for_us = true;
+}
+
+SrsDtlsEmptyImpl::~SrsDtlsEmptyImpl()
+{
+}
+
+srs_error_t SrsDtlsEmptyImpl::initialize(std::string version, std::string role)
+{
+    return srs_success;
+}
+
+srs_error_t SrsDtlsEmptyImpl::start_active_handshake()
+{
+    return srs_success;
+}
+
+bool SrsDtlsEmptyImpl::should_reset_timer()
+{
+    return false;
+}
+
+srs_error_t SrsDtlsEmptyImpl::on_dtls(char* data, int nb_data)
+{
+    return srs_success;
+}
+
+srs_error_t SrsDtlsEmptyImpl::get_srtp_key(std::string& recv_key, std::string& send_key)
+{
+    return srs_success;
+}
+
+void SrsDtlsEmptyImpl::callback_by_ssl(std::string type, std::string desc)
+{
+}
+
+srs_error_t SrsDtlsEmptyImpl::on_final_out_data(uint8_t* data, int size)
+{
+    return srs_success;
+}
+
+srs_error_t SrsDtlsEmptyImpl::on_handshake_done()
+{
+    return srs_success;
+}
+
+bool SrsDtlsEmptyImpl::is_dtls_client()
+{
+    return false;
+}
+
 SrsDtls::SrsDtls(ISrsDtlsCallback* callback)
 {
     callback_ = callback;
-    impl = new SrsDtlsServerImpl(callback);
+    impl = new SrsDtlsEmptyImpl();
 }
 
 SrsDtls::~SrsDtls()

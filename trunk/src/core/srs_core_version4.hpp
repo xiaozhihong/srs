@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 Winlin
+ * Copyright (c) 2013-2021 Winlin
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -26,6 +26,6 @@
 
 #define VERSION_MAJOR       4
 #define VERSION_MINOR       0
-#define VERSION_REVISION    88
+#define VERSION_REVISION    90
 
 #endif

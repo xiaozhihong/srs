@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 Winlin
+ * Copyright (c) 2013-2021 Winlin
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -87,6 +87,20 @@ public:
     bool can_print(srs_error_t err, uint32_t* pnn = NULL);
     // We also support int error code.
     bool can_print(int err, uint32_t* pnn = NULL);
+};
+
+// An standalone pithy print, without shared stages.
+class SrsAlonePithyPrint
+{
+private:
+    SrsStageInfo info_;
+    srs_utime_t previous_tick_;
+public:
+    SrsAlonePithyPrint();
+    virtual ~SrsAlonePithyPrint();
+public:
+    virtual void elapse();
+    virtual bool can_print();
 };
 
 // The stage is used for a collection of object to do print,

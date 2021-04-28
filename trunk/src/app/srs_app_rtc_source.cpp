@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 John
+ * Copyright (c) 2013-2021 John
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -509,11 +509,6 @@ srs_error_t SrsRtcStream::on_publish()
     is_created_ = true;
     is_delivering_packets_ = true;
 
-    // Notify the consumers about stream change event.
-    if ((err = on_source_changed()) != srs_success) {
-        return srs_error_wrap(err, "source id change");
-    }
-
     // Create a new bridger, because it's been disposed when unpublish.
 #ifdef SRS_FFMPEG_FIT
     SrsRtcFromRtmpBridger* impl = new SrsRtcFromRtmpBridger(this);
@@ -523,6 +518,11 @@ srs_error_t SrsRtcStream::on_publish()
 
     bridger_->setup(impl);
 #endif
+
+    // Notify the consumers about stream change event.
+    if ((err = on_source_changed()) != srs_success) {
+        return srs_error_wrap(err, "source id change");
+    }
 
     // TODO: FIXME: Handle by statistic.
 

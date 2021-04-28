@@ -1,7 +1,7 @@
 /**
  * The MIT License (MIT)
  *
- * Copyright (c) 2013-2020 Winlin
+ * Copyright (c) 2013-2021 Winlin
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -184,6 +184,25 @@ public:
     virtual srs_error_t initialize(std::string version, std::string role);
     virtual srs_error_t start_active_handshake();
     virtual bool should_reset_timer();
+protected:
+    virtual srs_error_t on_final_out_data(uint8_t* data, int size);
+    virtual srs_error_t on_handshake_done();
+    virtual bool is_dtls_client();
+};
+
+class SrsDtlsEmptyImpl : public SrsDtlsImpl
+{
+public:
+    SrsDtlsEmptyImpl();
+    virtual ~SrsDtlsEmptyImpl();
+public:
+    virtual srs_error_t initialize(std::string version, std::string role);
+    virtual srs_error_t start_active_handshake();
+    virtual bool should_reset_timer();
+    virtual srs_error_t on_dtls(char* data, int nb_data);
+public:
+    srs_error_t get_srtp_key(std::string& recv_key, std::string& send_key);
+    void callback_by_ssl(std::string type, std::string desc);
 protected:
     virtual srs_error_t on_final_out_data(uint8_t* data, int size);
     virtual srs_error_t on_handshake_done();
