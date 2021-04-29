@@ -166,36 +166,22 @@ SrsQuicStream::~SrsQuicStream()
 
 int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
 {
-    // Split data into packet because UDP have max packet size.
-    int offset = 0;
-    int max_packet_size = NGTCP2_MAX_PKTLEN_IPV4;
-    int nb_packets = 1 + (size - 1) / max_packet_size;
-
-    for (int i = 0; i < nb_packets; ++i) {
-        int packet_size = (int)size - offset;
-        if (packet_size > max_packet_size) {
-            packet_size = max_packet_size;
+    int nb = quic_transport_->write_stream(stream_id_, (const uint8_t*)buf, size, timeout);
+    if (nb < 0 ) {
+        if (quic_transport_->get_last_error() != SrsQuicErrorAgain) {
+            srs_error("write stream %ld failed, ret=%d", stream_id_, nb);
+            return -1;
         }
 
-        int nb = quic_transport_->write_stream(stream_id_, (const uint8_t*)buf + offset, packet_size, timeout);
-        if (nb < 0 ) {
-            if (quic_transport_->get_last_error() != SrsQuicErrorAgain) {
-                srs_error("write stream %ld failed, ret=%d", stream_id_, nb);
-                return -1;
-            }
-
-            srs_trace("before block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
-            quic_transport_->set_block(true);
-            if (wait_writeable(timeout) != 0) {
-                quic_transport_->set_last_error(SrsQuicErrorTimeout);
-                srs_error("write stream %ld timeout", stream_id_);
-                return -1;
-            }
-            quic_transport_->set_block(false);
-            srs_trace("after block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
+        srs_trace("before block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
+        quic_transport_->set_block(true);
+        if (wait_writeable(timeout) != 0) {
+            quic_transport_->set_last_error(SrsQuicErrorTimeout);
+            srs_error("write stream %ld timeout", stream_id_);
+            return -1;
         }
-
-        offset += packet_size;
+        quic_transport_->set_block(false);
+        srs_trace("after block, %s quic stat=%s", quic_transport_->get_conn_name().c_str(), dump_quic_conn_stat(quic_transport_->conn()).c_str());
     }
 
     return size;
