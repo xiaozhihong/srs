@@ -93,6 +93,7 @@ private:
     srs_cond_t ready_to_read_;
     // TODO: FIXME: use ring buffer instead of it.
     std::string read_buffer_;
+
     srs_cond_t ready_to_write_;
 
     int64_t stream_id_;
@@ -133,6 +134,8 @@ private:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
     int write_stream(const int64_t stream_id, const void* data, int len, srs_utime_t timeout);
+    bool check_send_flow_limit(int len);
+    void add_to_send_buffer(const int64_t stream_id, const void* data, int len);
 private:
 	srs_error_t update_quic_driver_timer();
     srs_error_t on_timer_quic_driver();
@@ -148,6 +151,7 @@ protected:
 protected:
     bool check_timeout();
     virtual srs_error_t quic_transport_driver();
+    srs_error_t quic_transport_write_stream_data();
     srs_error_t send_connection_close();
     // Get static secret to generate quic token.
     virtual uint8_t* get_static_secret() = 0;
@@ -220,6 +224,8 @@ protected:
     std::set<int64_t> stream_waiting_writeable_;
     srs_cond_t accept_stream_cond_;
     std::deque<int64_t> wait_accept_streams_;
+
+    std::deque<std::pair<int64_t, std::string> > send_buffer_;
 private:
     bool block_;
 };
