@@ -111,7 +111,11 @@ srs_error_t SrsRtcForward::on_before_play(SrsRtcConnection* session, SrsRequest*
     }
 
     ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
-    srs_freep(publish_stream);
+    // TODO: FIXME: bad code.
+    if (dynamic_cast<SrsRtcForwardQuicClient*>(publish_stream)) {
+        srs_freep(publish_stream);
+        rtc_source->set_publish_stream(NULL);
+    }
 
     SrsRtcForwardQuicClient* rtc_forward_quic_client = new SrsRtcForwardQuicClient(req);
     if ((err = rtc_forward_quic_client->start()) != srs_success) {

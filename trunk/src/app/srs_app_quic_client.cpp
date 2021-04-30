@@ -51,9 +51,6 @@ SrsQuicClient::SrsQuicClient()
     : SrsQuicTransport()
 {
     trd_ = NULL;
-
-    tls_context_ = NULL;
-	quic_token_ = NULL;
     connection_cond_ = NULL;
 }
 
@@ -91,16 +88,6 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
   	params.active_connection_id_limit = 7;
 
     return settings;
-}
-
-uint8_t* SrsQuicClient::get_static_secret()
-{
-    return quic_token_->get_static_secret();
-}
-
-size_t SrsQuicClient::get_static_secret_len()
-{
-    return quic_token_->get_static_secret_len();
 }
 
 srs_error_t SrsQuicClient::create_udp_socket()
@@ -241,6 +228,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_wrap(err, "create socket failed");
     }
 
+    // TODO: FIXME: global client udp loop.
     if ((err = create_udp_io_thread()) != srs_success) {
         return srs_error_wrap(err, "create udp io thread failed");
     }
@@ -252,6 +240,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_new(ERROR_QUIC_CLIENT, "invalid addr=%s", ip.c_str());
     }
 
+    // TODO: FIXME: maginc number.
     scid_.datalen = 17;
     srs_generate_rand_data(scid_.data, scid_.datalen);
     dcid_.datalen = kClientCidLen;
@@ -263,7 +252,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_wrap(err, "connect to %s:%u failed", ip.c_str(), port);
     }
 
-    if ((err = quic_transport_driver()) != srs_success) {
+    if ((err = write_protocol_data()) != srs_success) {
         return srs_error_wrap(err, "send quic client init packet failed");
     }
 
@@ -296,7 +285,7 @@ srs_error_t SrsQuicClient::cycle()
         }
 
         int nread = srs_recvfrom(udp_fd_, buf, nb_buf, (sockaddr*)&remote_addr_, (int*)&remote_addr_len_, SRS_UTIME_NO_TIMEOUT);
-        if (nread  <= 0) {
+        if (nread <= 0) {
             srs_warn("quic client udp recv failed, ret=%d", nread);
             continue;
         }

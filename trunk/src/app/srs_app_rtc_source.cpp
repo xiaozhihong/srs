@@ -43,6 +43,7 @@
 #include <srs_protocol_json.hpp>
 #include <srs_app_pithy_print.hpp>
 #include <srs_app_log.hpp>
+#include <srs_app_utility.hpp>
 
 #ifdef SRS_FFMPEG_FIT
 #include <srs_app_rtc_codec.hpp>
@@ -306,10 +307,12 @@ bool SrsRtcStreamManager::stream_publishing(std::string stream_url, int& forward
 {
     std::map<std::string, SrsRtcStream*>::iterator iter = pool.find(stream_url);
     if (iter == pool.end()) {
+        srs_warn("rtc stream=%s not found", stream_url.c_str());
         return false;
     }
 
     forward_level = iter->second->get_forward_level();
+    srs_warn("rtc stream=%s level=%d, publishing=%d", stream_url.c_str(), forward_level, (! iter->second->can_publish()));
     return ! iter->second->can_publish();
 }
 
@@ -494,6 +497,7 @@ bool SrsRtcStream::can_publish()
 void SrsRtcStream::set_stream_created()
 {
     srs_assert(!is_created_ && !is_delivering_packets_);
+    srs_trace("rtc stream=%s set created", req->get_stream_url().c_str());
     is_created_ = true;
 }
 
@@ -507,6 +511,7 @@ srs_error_t SrsRtcStream::on_publish()
     // For RTC, DTLS is done, and we are ready to deliver packets.
     // @note For compatible with RTMP, we also set the is_created_, it MUST be created here.
     is_created_ = true;
+    srs_trace("rtc stream=%s on publish", req->get_stream_url().c_str());
     is_delivering_packets_ = true;
 
     // Create a new bridger, because it's been disposed when unpublish.
@@ -536,7 +541,7 @@ void SrsRtcStream::on_unpublish()
         return;
     }
 
-    srs_trace("cleanup when unpublish, created=%u, deliver=%u", is_created_, is_delivering_packets_);
+    srs_trace("rtc stream %s cleanup when unpublish, created=%u, deliver=%u", req->get_stream_url().c_str(), is_created_, is_delivering_packets_);
 
     is_created_ = false;
     is_delivering_packets_ = false;
@@ -643,9 +648,8 @@ std::vector<SrsRtcTrackDescription*> SrsRtcStream::get_track_desc(std::string ty
         return track_descs;
     }
 
-    srs_trace("track name=%s, media name=%s", stream_desc_->audio_track_desc_->media_->name_.c_str(), media_name.c_str());
     if (type == "audio") {
-        if (stream_desc_->audio_track_desc_->media_->name_ == media_name) {
+        if (srs_string_case_compare(stream_desc_->audio_track_desc_->media_->name_, media_name)) {
             track_descs.push_back(stream_desc_->audio_track_desc_);
         }
     }

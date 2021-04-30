@@ -84,6 +84,8 @@ std::string SrsQuicListener::get_key()
     } else if (listen_type_ == SrsQuicListenerHttpStream) {
         return _srs_config->get_http_stream_quic_ssl_key();
     }
+
+    return "";
 }
 
 std::string SrsQuicListener::get_cert()
@@ -95,6 +97,8 @@ std::string SrsQuicListener::get_cert()
     } else if (listen_type_ == SrsQuicListenerHttpStream) {
         return _srs_config->get_http_stream_quic_ssl_cert();
     }
+
+    return "";
 }
 
 srs_error_t SrsQuicListener::on_udp_packet(SrsUdpMuxSocket* skt)

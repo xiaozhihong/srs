@@ -437,11 +437,13 @@ srs_error_t SrsRtcPlayStream::initialize(SrsRequest* req, std::map<uint32_t, Srs
         if (desc->type_ == "audio") {
             SrsRtcAudioSendTrack* track = new SrsRtcAudioSendTrack(session_, desc);
             audio_tracks_.insert(make_pair(ssrc, track));
+            srs_trace("RTC player add audio track, ssrc=%u", ssrc);
         }
 
         if (desc->type_ == "video") {
             SrsRtcVideoSendTrack* track = new SrsRtcVideoSendTrack(session_, desc);
             video_tracks_.insert(make_pair(ssrc, track));
+            srs_trace("RTC player add video track, ssrc=%u", ssrc);
         }
     }
 
@@ -3153,7 +3155,7 @@ srs_error_t SrsRtcConnection::negotiate_play_capability(SrsRequest* req, SrsRtcS
 
     //negotiate video media
     std::vector<SrsRtcTrackDescription*> req_video_tracks = req_stream_desc->video_track_descs_;
-    src_track_descs = source->get_track_desc("video", "h264");
+    src_track_descs = source->get_track_desc("video", "H264");
     for(int i = 0; i < (int)req_video_tracks.size(); ++i) {
         SrsRtcTrackDescription* req_video = req_video_tracks.at(i);
         int remote_twcc_id = req_video->get_rtp_extension_id(kTWCCExt);

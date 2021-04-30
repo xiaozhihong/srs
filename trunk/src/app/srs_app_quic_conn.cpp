@@ -128,16 +128,6 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
     return settings;
 }
 
-uint8_t* SrsQuicConnection::get_static_secret()
-{
-    return quic_token_->get_static_secret();
-}
-
-size_t SrsQuicConnection::get_static_secret_len()
-{
-    return quic_token_->get_static_secret_len();
-}
-
 int SrsQuicConnection::handshake_completed()
 {
 	srs_trace("quic connection handshake completed");

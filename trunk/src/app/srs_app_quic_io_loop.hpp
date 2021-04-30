@@ -50,7 +50,7 @@ class ISrsQuicHandler
 {
 public:
     ISrsQuicHandler() {}
-    ~ISrsQuicHandler() {}
+    virtual ~ISrsQuicHandler() {}
 public:
     virtual srs_error_t on_quic_client(SrsQuicConnection* conn, SrsQuicListenerType type) = 0;
 };

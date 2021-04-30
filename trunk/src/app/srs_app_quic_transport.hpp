@@ -128,17 +128,17 @@ public:
     std::string get_conn_name();
     void wait_stream_writeable(int64_t stream_id);
     SrsQuicError get_last_error() const { return last_err_; }
-    void set_block(bool block) { block_ = block; }
-    bool get_block() const { return block_; }
+    void set_blocking(bool blocking) { blocking_ = blocking; }
+    bool get_blocking() const { return blocking_; }
 private:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
-    int write_stream(const int64_t stream_id, const void* data, int len, srs_utime_t timeout);
-    bool check_send_flow_limit(int len);
-    void add_to_send_buffer(const int64_t stream_id, const void* data, int len);
+    int write_stream(const int64_t stream_id, const void* data, int len, int& nb_write);
+    bool check_send_flow_limit(int64_t stream_id, int len);
+    void add_to_buffer(const int64_t stream_id, const void* data, int len);
 private:
-	srs_error_t update_quic_driver_timer();
-    srs_error_t on_timer_quic_driver();
+	srs_error_t update_timer();
+    srs_error_t on_timer();
 private:
     srs_error_t on_error();
     srs_error_t disconnect();
@@ -150,12 +150,12 @@ protected:
     virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
 protected:
     bool check_timeout();
-    virtual srs_error_t quic_transport_driver();
-    srs_error_t quic_transport_write_stream_data();
+    srs_error_t write_protocol_data();
+    srs_error_t write_stream_data(int64_t stream_id);
     srs_error_t send_connection_close();
     // Get static secret to generate quic token.
-    virtual uint8_t* get_static_secret() = 0;
-    virtual size_t get_static_secret_len() = 0;
+    uint8_t* get_static_secret();
+    size_t get_static_secret_len();
     virtual int send_packet(ngtcp2_path* path, uint8_t* data, const int size);
 // Quic tls callback function
 public:
@@ -227,7 +227,7 @@ protected:
 
     std::deque<std::pair<int64_t, std::string> > send_buffer_;
 private:
-    bool block_;
+    bool blocking_;
 };
 
 #endif

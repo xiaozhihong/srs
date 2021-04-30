@@ -33,6 +33,7 @@ using namespace std;
 
 #include <srs_kernel_error.hpp>
 #include <srs_kernel_log.hpp>
+#include <srs_app_utility.hpp>
 
 // TODO: FIXME: Maybe we should use json.encode to escape it?
 const std::string kCRLF = "\r\n";
@@ -318,13 +319,8 @@ vector<SrsMediaPayloadType> SrsMediaDesc::find_media_with_encoding_name(const st
 {
     std::vector<SrsMediaPayloadType> payloads;
 
-    std::string lower_name(encoding_name), upper_name(encoding_name);
-    transform(encoding_name.begin(), encoding_name.end(), lower_name.begin(), ::tolower);
-    transform(encoding_name.begin(), encoding_name.end(), upper_name.begin(), ::toupper);
-
     for (size_t i = 0; i < payload_types_.size(); ++i) {
-        if (payload_types_[i].encoding_name_ == std::string(lower_name.c_str()) ||
-            payload_types_[i].encoding_name_ == std::string(upper_name.c_str())) {
+        if (srs_string_case_compare(payload_types_[i].encoding_name_, encoding_name)) {
             payloads.push_back(payload_types_[i]);
         }
     }

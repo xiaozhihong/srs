@@ -62,7 +62,7 @@ using namespace std;
 #include <srs_app_quic_conn.hpp>
 
 const int kMinRtcForwardHeaderLen = 12;
-const int kMaxRtcForwardHeaderLen = 10000;
+const int kMaxRtcForwardHeaderLen = 8000;
 
 SrsRtcForwardQuicConn::SrsRtcForwardQuicConn(SrsQuicServer* server, SrsQuicConnection* quic_conn)
 {
@@ -209,8 +209,6 @@ srs_error_t SrsRtcForwardQuicStreamThread::start()
 
 srs_error_t SrsRtcForwardQuicStreamThread::pull()
 {
-    srs_error_t err = srs_success;
-
     if (trd_ == NULL) {
         return srs_error_new(ERROR_RTC_FORWARD, "null thread");
     }
@@ -294,9 +292,9 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_req_json(char* data, size_t s
         return process_rtc_forward_req(json_obj);
     } else if (interface == "request_keyframe") {
         return process_request_keyframe_req(json_obj);
-    } else {
-        return srs_error_new(ERROR_RTC_FORWARD, "invalid req %s", interface.c_str());
     }
+
+    return srs_error_new(ERROR_RTC_FORWARD, "invalid req %s", interface.c_str());
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject* json_obj)
@@ -325,8 +323,6 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject
     }
     req_->app = prop->to_str();
 
-    srs_trace("stream_url=%s", req_->get_stream_url().c_str());
-
 	SrsRtcStream* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
@@ -341,6 +337,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject
     }
     
     string control_response = obj_rtc_stream->dumps();
+
+    srs_trace("stream_url=%s, send response=%s", req_->get_stream_url().c_str(), control_response.c_str());
     uint16_t header_len = 2;
     uint16_t body_len = control_response.size();
     char* buf = new char[header_len + body_len];
@@ -369,8 +367,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::cycle()
         srs_error("do cycle failed, err=%s", srs_error_desc(err).c_str());
     }
 
-    quic_conn_->close_stream(stream_id_);
     // TODO: need to close stream?
+    quic_conn_->close_stream(stream_id_);
 
     return err;
 }
@@ -404,7 +402,6 @@ srs_error_t SrsRtcForwardQuicStreamThread::do_request_keyframe()
         return err;
     }
 
-    uint32_t media_ssrc = 0;
     ISrsRtcPublishStream* publish_stream = rtc_source->publish_stream();
     if (publish_stream != NULL) {
 	    for (int i = 0; i < (int)stream_desc->video_track_descs_.size(); ++i) {
@@ -471,11 +468,9 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
             return srs_error_wrap(err, "encode packet");
         }
 
-        if (true) {
-            uint16_t rtp_size = stream.pos() - 2;
-            SrsBuffer header_writer(fixed_buffer, 2);
-            header_writer.write_2bytes(rtp_size);
-        }
+        uint16_t rtp_size = stream.pos() - 2;
+        SrsBuffer header_writer(fixed_buffer, 2);
+        header_writer.write_2bytes(rtp_size);
 
         if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
             return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");

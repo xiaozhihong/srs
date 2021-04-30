@@ -99,7 +99,7 @@ ngtcp2_crypto_md crypto_md_sha256()
 void ngtcp2_log_handle(void *user_data, const char *fmt, ...) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    if (! quic_transport->get_block()) {
+    if (! quic_transport->get_blocking()) {
         return;
     }
 
@@ -117,7 +117,7 @@ void ngtcp2_log_handle(void *user_data, const char *fmt, ...)
 void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen)
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    if (! quic_transport->get_block()) {
+    if (! quic_transport->get_blocking()) {
         return;
     }
 
@@ -158,6 +158,7 @@ int srs_generate_rand_data(uint8_t* dest, size_t destlen)
 
 ngtcp2_tstamp srs_get_system_time_for_quic()
 {
+    // ngtcp2 using nano second.
     return srs_get_system_time() * 1000;
 }
 

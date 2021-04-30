@@ -113,8 +113,6 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
         return srs_error_new(ERROR_RTC_SOURCE_BUSY, "stream %s busy", req_->get_stream_url().c_str());
     }
 
-    rtc_source->on_publish();
-
     while (true) {
 		if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "rtc forward client");
@@ -163,6 +161,8 @@ srs_error_t SrsRtcForwardQuicClient::do_cycle(SrsRtcStream* rtc_source)
             return srs_error_wrap(err, "send forward req failed");
         }
 
+        rtc_source->on_publish();
+
         if ((err = recv_rtp_packet(quic_client, rtc_forward_stream, rtc_source)) != srs_success) {
             return srs_error_wrap(err, "recv rtp packet failed");
         }
@@ -210,27 +210,24 @@ srs_error_t SrsRtcForwardQuicClient::connect_and_open_stream(SrsQuicClient* quic
     string host = "";
     int port = 0;
 
-	if (true) {
-        vector<string> coworkers = _srs_config->get_rtc_coworkers(req_->vhost);
-        for (int i = 0; i < (int)coworkers.size(); i++) {
-            // TODO: FIXME: User may config the server itself as coworker, we must identify and ignore it.
-            string coworker = coworkers.at(i);
+    vector<string> coworkers = _srs_config->get_rtc_coworkers(req_->vhost);
+    for (int i = 0; i < (int)coworkers.size(); i++) {
+        // TODO: FIXME: User may config the server itself as coworker, we must identify and ignore it.
+        string coworker = coworkers.at(i);
 
-            string url = "http://" + coworker + "/api/v1/rtc_clusters?"
-                + "vhost=" + req_->vhost + "&ip=" + req_->host + "&app=" + req_->app + "&stream=" + req_->stream
-                + "&coworker=" + coworker;
+        string url = "http://" + coworker + "/api/v1/rtc_clusters?vhost=" + req_->vhost + "&ip=" + req_->host + 
+            "&app=" + req_->app + "&stream=" + req_->stream + "&coworker=" + coworker;
 
-            if ((err = SrsHttpHooks::discover_co_workers(url, host, port)) == srs_success) {
-                break;
-            }
-
-            srs_warn("discover coworkers failed, url=%s, err=%s", url.c_str(), srs_error_desc(err));
-            srs_freep(err);
+        if ((err = SrsHttpHooks::discover_co_workers(url, host, port)) == srs_success) {
+            break;
         }
+
+        srs_warn("discover coworkers failed, url=%s, err=%s", url.c_str(), srs_error_desc(err).c_str());
+        srs_freep(err);
     }
 
     if (host.empty() || port == 0) {
-        return srs_error_new(ERROR_RTC_CLUSTER_REDIRECT, "no origin");
+        return srs_error_new(ERROR_RTC_CLUSTER_REDIRECT, "no found rtc origin");
     }
 
     if ((err = quic_client->connect(host, port, timeout_)) != srs_success) {
@@ -287,23 +284,21 @@ srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client
 
     rsp_json.append(ctrl_response, body_len);
 
-    if (true) {
-		SrsJsonObject* req = NULL;
-    	SrsAutoFree(SrsJsonObject, req);
+	SrsJsonObject* req = NULL;
+    SrsAutoFree(SrsJsonObject, req);
 
-        srs_trace("ctrl response=%s", rsp_json.c_str());
-    	SrsJsonAny* json = SrsJsonAny::loads(rsp_json);
-    	if (!json || !json->is_object()) {
-    	    return srs_error_new(ERROR_RTC_FORWARD, "invalid body %s", rsp_json.c_str());
-    	}
-    	req = json->to_object();
-        if ((err = rtc_source->from_json(req)) != srs_success) {
-            return srs_error_wrap(err, "unserialize rtc stream from json failed");
-        }
-
-        rtc_source->incr_forward_level();
-        srs_trace("rtc forward level=%d", rtc_source->get_forward_level());
+    srs_trace("stream=%s ctrl response=%s", req_->get_stream_url().c_str(), rsp_json.c_str());
+    SrsJsonAny* json = SrsJsonAny::loads(rsp_json);
+    if (!json || !json->is_object()) {
+        return srs_error_new(ERROR_RTC_FORWARD, "invalid body %s", rsp_json.c_str());
     }
+    req = json->to_object();
+    if ((err = rtc_source->from_json(req)) != srs_success) {
+        return srs_error_wrap(err, "unserialize rtc stream from json failed");
+    }
+
+    rtc_source->incr_forward_level();
+    srs_trace("rtc forward level=%d", rtc_source->get_forward_level());
 
     srs_cond_signal(cond_waiting_sdp_);
 
@@ -314,7 +309,6 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
 {
     srs_error_t err = srs_success;
 
-    int __test = 0;
     while (true) {
         if ((err = trd_->pull()) != srs_success) {
             return srs_error_wrap(err, "quic client io thread");
@@ -375,13 +369,6 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         if (rtc_source->can_stop_forward(30 * SRS_UTIME_SECONDS)) {
             return srs_error_new(ERROR_RTC_NO_NEED_FORWARD, "no consumer, stop forward");
         }
-
-        /*
-        if (++__test == 10000) {
-            srs_warn("break quic recv loop because of test");
-            return srs_error_new(ERROR_RTC_FORWARD, "test break");
-        }
-        */
 
         _srs_rtp_cache->recycle(pkt);
     }
