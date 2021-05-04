@@ -129,16 +129,20 @@ srs_error_t SrsQuicIoLoop::initialize()
 
 void SrsQuicIoLoop::subscribe(SrsQuicConnection* quic_conn)
 {
+    srs_trace("subscribe quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->subscribe(quic_conn);
 }
 
 void SrsQuicIoLoop::unsubscribe(SrsQuicConnection* quic_conn)
 {
+    srs_trace("unsubscribe quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->unsubscribe(quic_conn);
 }
 
 void SrsQuicIoLoop::remove(ISrsResource* resource)
 {
+    SrsQuicConnection* quic_conn = dynamic_cast<SrsQuicConnection*>(resource);
+    srs_trace("remove quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->remove(resource);
 }
 
@@ -247,7 +251,7 @@ srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener*
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
     }
-    string conn_id = quic_conn->get_conn_id();
+    string conn_id = quic_conn->get_scid();
     srs_trace("add new quic connection=%s", quic_conn_id_dump(conn_id).c_str());
     quic_conn_map_->add_with_name(conn_id, quic_conn);
     *p_conn = quic_conn;

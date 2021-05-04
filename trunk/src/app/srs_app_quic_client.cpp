@@ -78,13 +78,13 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
   	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
 
 	ngtcp2_transport_params& params = settings.transport_params;
-  	params.initial_max_stream_data_bidi_local = 256 * 1024;
-  	params.initial_max_stream_data_bidi_remote = 256 * 1024;
-  	params.initial_max_stream_data_uni = 256 * 1024;;
+  	params.initial_max_stream_data_bidi_local = 1 * 1024 * 1024;
+  	params.initial_max_stream_data_bidi_remote = 1 * 1024 * 1024;
+  	params.initial_max_stream_data_uni = 1 * 1024 * 1024;;
   	params.initial_max_data = 1 * 1024 * 1024;
-  	params.initial_max_streams_bidi = 100;
-  	params.initial_max_streams_uni = 3;
-  	params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+  	params.initial_max_streams_bidi = 4;
+  	params.initial_max_streams_uni = 4;
+  	params.max_idle_timeout = 15 * NGTCP2_SECONDS;
   	params.active_connection_id_limit = 7;
 
     return settings;
@@ -241,7 +241,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
     }
 
     // TODO: FIXME: maginc number.
-    scid_.datalen = 17;
+    scid_.datalen = 18;
     srs_generate_rand_data(scid_.data, scid_.datalen);
     dcid_.datalen = kClientCidLen;
     srs_generate_rand_data(dcid_.data, dcid_.datalen);
@@ -261,7 +261,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_new(ERROR_QUIC_CLIENT, "connect to %s:%u timeout", ip.c_str(), port);
     }
 
-    srs_trace("quic client connect to %s:%u success", ip.c_str(), port);
+    srs_trace("quic client %s connect to %s:%u success", get_conn_name().c_str(), ip.c_str(), port);
     return err;
 }
 

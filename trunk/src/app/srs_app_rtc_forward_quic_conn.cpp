@@ -99,7 +99,13 @@ srs_error_t SrsRtcForwardQuicConn::cycle()
     srs_error_t err = srs_success;
 
     if ((err = do_cycle()) != srs_success) {
-        srs_error("do cycle failed, err=%s", srs_error_desc(err).c_str());
+        srs_error("do rtc forward quic conn cycle failed, err=%s", srs_error_desc(err).c_str());
+    }
+
+    for (std::map<int64_t, SrsRtcForwardQuicStreamThread*>::iterator iter = stream_trds_.begin();
+            iter != stream_trds_.end(); ++iter) {
+        SrsRtcForwardQuicStreamThread* stream_trd = iter->second;
+        srs_freep(stream_trd);
     }
 
     server_->remove(this);
@@ -117,10 +123,10 @@ srs_error_t SrsRtcForwardQuicConn::do_cycle()
         }
 
         if ((err = accept_stream()) != srs_success) {
-            return srs_error_wrap(err, "accept stream failed");
+            return srs_error_wrap(err, "quic accept stream failed");
         }
 
-        clean_stream_thread();
+        clean_zombie_stream_thread();
     }
 
     return err;
@@ -151,7 +157,7 @@ srs_error_t SrsRtcForwardQuicConn::accept_stream()
     return err;
 }
 
-void SrsRtcForwardQuicConn::clean_stream_thread()
+void SrsRtcForwardQuicConn::clean_zombie_stream_thread()
 {
     std::map<int64_t, SrsRtcForwardQuicStreamThread*>::iterator iter = stream_trds_.begin();
     while (iter != stream_trds_.end()) {
@@ -179,8 +185,8 @@ std::string SrsRtcForwardQuicConn::desc()
 
 SrsRtcForwardQuicStreamThread::SrsRtcForwardQuicStreamThread(SrsRtcForwardQuicConn* consumer, int64_t stream_id)
 {
-    req_ = NULL;
     trd_ = NULL;
+    req_ = NULL;
 
     consumer_ = consumer;
     quic_conn_ = consumer->quic_conn_;
@@ -191,8 +197,8 @@ SrsRtcForwardQuicStreamThread::SrsRtcForwardQuicStreamThread(SrsRtcForwardQuicCo
 
 SrsRtcForwardQuicStreamThread::~SrsRtcForwardQuicStreamThread()
 {
-    srs_freep(req_);
     srs_freep(trd_);
+    srs_freep(req_);
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::start()
@@ -364,11 +370,11 @@ srs_error_t SrsRtcForwardQuicStreamThread::cycle()
     srs_error_t err = srs_success;
 
     if ((err = do_cycle()) != srs_success) {
-        srs_error("do cycle failed, err=%s", srs_error_desc(err).c_str());
+        srs_error("rtc forward quic stream %s cycle failed, err=%s", 
+            req_->get_stream_url().c_str(), srs_error_desc(err).c_str());
     }
 
-    // TODO: need to close stream?
-    quic_conn_->close_stream(stream_id_);
+    quic_conn_->close_stream(stream_id_, srs_error_code(err));
 
     return err;
 }
@@ -451,6 +457,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         consumer->dump_packet(&pkt);
 
         if (!pkt) {
+            consumer->wait(1);
             // TODO: FIXME: bad code.
             if ((err = process_req(SRS_UTIME_MILLISECONDS)) != srs_success) {
                 if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {

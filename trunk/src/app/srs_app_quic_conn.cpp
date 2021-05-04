@@ -59,7 +59,6 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContext
 SrsQuicConnection::~SrsQuicConnection()
 {
     _quic_io_loop->unsubscribe(this);
-
     _quic_io_loop->remove(this);
 }
 
@@ -111,13 +110,13 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
   	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
 
     ngtcp2_transport_params& params = settings.transport_params;
-  	params.initial_max_stream_data_bidi_local = 256 * 1024;
-  	params.initial_max_stream_data_bidi_remote = 256 * 1024;
-  	params.initial_max_stream_data_uni = 256 * 1024;;
+  	params.initial_max_stream_data_bidi_local = 1 * 1024 * 1024;
+  	params.initial_max_stream_data_bidi_remote = 1 * 1024 * 1024;
+  	params.initial_max_stream_data_uni = 1 * 1024 * 1024;;
   	params.initial_max_data = 1 * 1024 * 1024;
-  	params.initial_max_streams_bidi = 100;
-  	params.initial_max_streams_uni = 3;
-  	params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+  	params.initial_max_streams_bidi = 4;
+  	params.initial_max_streams_uni = 4;
+  	params.max_idle_timeout = 15 * NGTCP2_SECONDS;
   	params.stateless_reset_token_present = 1;
   	params.active_connection_id_limit = 7;
 
