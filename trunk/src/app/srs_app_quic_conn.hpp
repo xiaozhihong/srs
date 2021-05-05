@@ -60,8 +60,6 @@ public:
 // Interface SrsQuicTransport
 private:
     virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
-	virtual uint8_t* get_static_secret();
-    virtual size_t get_static_secret_len();
     virtual int handshake_completed();
     virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
                 sockaddr* remote_addr, const socklen_t remote_addrlen,

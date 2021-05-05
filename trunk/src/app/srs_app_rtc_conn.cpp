@@ -437,11 +437,13 @@ srs_error_t SrsRtcPlayStream::initialize(SrsRequest* req, std::map<uint32_t, Srs
         if (desc->type_ == "audio") {
             SrsRtcAudioSendTrack* track = new SrsRtcAudioSendTrack(session_, desc);
             audio_tracks_.insert(make_pair(ssrc, track));
+            srs_trace("RTC player add audio track, ssrc=%u", ssrc);
         }
 
         if (desc->type_ == "video") {
             SrsRtcVideoSendTrack* track = new SrsRtcVideoSendTrack(session_, desc);
             video_tracks_.insert(make_pair(ssrc, track));
+            srs_trace("RTC player add video track, ssrc=%u", ssrc);
         }
     }
 
@@ -885,6 +887,7 @@ SrsRtcPublishStream::SrsRtcPublishStream(SrsRtcConnection* session, const SrsCon
     session_ = session;
     request_keyframe_ = false;
     pli_epp = new SrsErrorPithyPrint();
+    fir_seq_ = 0;
     twcc_epp_ = new SrsErrorPithyPrint(3.0);
 
     req = NULL;
@@ -1483,14 +1486,16 @@ srs_error_t SrsRtcPublishStream::do_request_keyframe(uint32_t ssrc, SrsContextId
         srs_freep(err);
     }
 
-    // TODO: FIXME: add new function to send fir.
-    static int fir_seq = 0;
-    if ((err = session_->send_rtcp_fb_fir(ssrc, fir_seq++)) != srs_success) {
-        srs_warn("FIR err %s", srs_error_desc(err).c_str());
-        srs_freep(err);
+    // TODO: FIXME: FIR/PLI use in different case
+    // @see https://blog.jianchihu.net/webrtc-research-keyframe-request.html
+    if (false) {
+        if ((err = session_->send_rtcp_fb_fir(ssrc, fir_seq_)) != srs_success) {
+            srs_warn("FIR err %s", srs_error_desc(err).c_str());
+            srs_freep(err);
+        }
     }
 
-
+    ++fir_seq_;
     session_->stat_->nn_pli++;
 
     return err;
@@ -2487,7 +2492,7 @@ srs_error_t SrsRtcConnection::send_rtcp_fb_pli(uint32_t ssrc, const SrsContextId
     return send_rtcp(stream.data(), stream.pos());
 }
 
-srs_error_t SrsRtcConnection::send_rtcp_fb_fir(uint32_t ssrc, uint32_t fir_seq)
+srs_error_t SrsRtcConnection::send_rtcp_fb_fir(uint32_t ssrc, uint8_t fir_seq)
 {
     srs_error_t err = srs_success;
 
@@ -3153,7 +3158,7 @@ srs_error_t SrsRtcConnection::negotiate_play_capability(SrsRequest* req, SrsRtcS
 
     //negotiate video media
     std::vector<SrsRtcTrackDescription*> req_video_tracks = req_stream_desc->video_track_descs_;
-    src_track_descs = source->get_track_desc("video", "h264");
+    src_track_descs = source->get_track_desc("video", "H264");
     for(int i = 0; i < (int)req_video_tracks.size(); ++i) {
         SrsRtcTrackDescription* req_video = req_video_tracks.at(i);
         int remote_twcc_id = req_video->get_rtp_extension_id(kTWCCExt);

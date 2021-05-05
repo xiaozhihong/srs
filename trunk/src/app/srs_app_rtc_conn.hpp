@@ -296,6 +296,7 @@ private:
 private:
     bool request_keyframe_;
     SrsErrorPithyPrint* pli_epp;
+    uint8_t fir_seq_;
 private:
     SrsRequest* req;
     SrsRtcStream* source;
@@ -515,7 +516,7 @@ public:
     srs_error_t send_rtcp_rr(uint32_t ssrc, SrsRtpRingBuffer* rtp_queue, const uint64_t& last_send_systime, const SrsNtp& last_send_ntp);
     srs_error_t send_rtcp_xr_rrtr(uint32_t ssrc);
     srs_error_t send_rtcp_fb_pli(uint32_t ssrc, const SrsContextId& cid_of_subscriber);
-    srs_error_t send_rtcp_fb_fir(uint32_t ssrc, uint32_t fir_seq);
+    srs_error_t send_rtcp_fb_fir(uint32_t ssrc, uint8_t fir_seq);
 public:
     // Simulate the NACK to drop nn packets.
     void simulate_nack_drop(int nn);

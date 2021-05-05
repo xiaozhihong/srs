@@ -704,5 +704,7 @@ extern std::string srs_string_dumps_hex(const char* str, int length, int limit, 
 //      srs_getenv("EIP") === srs_getenv("$EIP")
 extern std::string srs_getenv(std::string key);
 
+extern bool srs_string_case_compare(const std::string& l, const std::string& r);
+
 #endif
 

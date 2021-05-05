@@ -50,7 +50,7 @@ class ISrsQuicHandler
 {
 public:
     ISrsQuicHandler() {}
-    ~ISrsQuicHandler() {}
+    virtual ~ISrsQuicHandler() {}
 public:
     virtual srs_error_t on_quic_client(SrsQuicConnection* conn, SrsQuicListenerType type) = 0;
 };
@@ -77,7 +77,7 @@ private:
     struct sockaddr_in listen_sa_;
 };
 
-// The QUIC server instance, listen UDP port, handle UDP packet, manage QUIC connections.
+// The QUIC server instance, handle UDP packet, manage QUIC connections.
 class SrsQuicIoLoop
 {
 public:

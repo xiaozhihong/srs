@@ -71,7 +71,7 @@ public:
     virtual std::string desc();
 private:
     srs_error_t accept_stream();
-    void clean_stream_thread();
+    void clean_zombie_stream_thread();
 public:
     SrsSTCoroutine* trd_;
     SrsQuicServer* server_;

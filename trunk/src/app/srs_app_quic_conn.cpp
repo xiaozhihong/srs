@@ -43,9 +43,6 @@ using namespace std;
 #include <srs_app_quic_util.hpp>
 #include <srs_app_quic_io_loop.hpp>
 
-const int kServerCidLen = 18;
-const int kClientCidLen = 18;
-
 SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContextId& cid)
     : SrsQuicTransport()
 {
@@ -59,7 +56,6 @@ SrsQuicConnection::SrsQuicConnection(SrsQuicListener* listener, const SrsContext
 SrsQuicConnection::~SrsQuicConnection()
 {
     _quic_io_loop->unsubscribe(this);
-
     _quic_io_loop->remove(this);
 }
 
@@ -108,16 +104,16 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
   	settings.token.len = tokenlen;
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
-  	settings.initial_rtt = NGTCP2_DEFAULT_INITIAL_RTT;
+  	settings.initial_rtt = 10 * NGTCP2_MILLISECONDS;
 
     ngtcp2_transport_params& params = settings.transport_params;
-  	params.initial_max_stream_data_bidi_local = 256 * 1024;
-  	params.initial_max_stream_data_bidi_remote = 256 * 1024;
-  	params.initial_max_stream_data_uni = 256 * 1024;;
-  	params.initial_max_data = 1 * 1024 * 1024;
-  	params.initial_max_streams_bidi = 100;
-  	params.initial_max_streams_uni = 3;
-  	params.max_idle_timeout = 30 * NGTCP2_SECONDS;
+  	params.initial_max_stream_data_bidi_local = kStreamDataSize;
+  	params.initial_max_stream_data_bidi_remote = kStreamDataSize;
+  	params.initial_max_stream_data_uni = kStreamDataSize;;
+  	params.initial_max_data = 2 * kStreamDataSize;
+  	params.initial_max_streams_bidi = 4;
+  	params.initial_max_streams_uni = 4;
+  	params.max_idle_timeout = 15 * NGTCP2_SECONDS;
   	params.stateless_reset_token_present = 1;
   	params.active_connection_id_limit = 7;
 
@@ -128,19 +124,9 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
     return settings;
 }
 
-uint8_t* SrsQuicConnection::get_static_secret()
-{
-    return quic_token_->get_static_secret();
-}
-
-size_t SrsQuicConnection::get_static_secret_len()
-{
-    return quic_token_->get_static_secret_len();
-}
-
 int SrsQuicConnection::handshake_completed()
 {
-	srs_trace("quic connection handshake completed");
+	srs_trace("quic connection handshake %s completed", get_conn_name().c_str());
 
     uint8_t token[kMaxTokenLen];
     size_t tokenlen = sizeof(token);

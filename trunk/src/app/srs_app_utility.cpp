@@ -1450,3 +1450,12 @@ string srs_getenv(string key)
     return "";
 }
 
+bool char_case_compare(const char& c1, const char& c2)
+{
+	return toupper(c1) == toupper(c2);
+}
+
+bool srs_string_case_compare(const string& l, const string& r)
+{
+	return (l.size() == r.size() && equal(l.begin(), l.end(), r.begin(), char_case_compare));
+}

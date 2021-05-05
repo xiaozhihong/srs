@@ -41,8 +41,6 @@ using namespace std;
 #include <srs_protocol_utility.hpp>
 #include <srs_app_rtc_forward.hpp>
 
-const size_t kSvScidLen = 18;
-
 SrsQuicListener::SrsQuicListener(ISrsQuicHandler* handler, SrsQuicListenerType type)
 {
     handler_ = handler;
@@ -84,6 +82,8 @@ std::string SrsQuicListener::get_key()
     } else if (listen_type_ == SrsQuicListenerHttpStream) {
         return _srs_config->get_http_stream_quic_ssl_key();
     }
+
+    return "";
 }
 
 std::string SrsQuicListener::get_cert()
@@ -95,6 +95,8 @@ std::string SrsQuicListener::get_cert()
     } else if (listen_type_ == SrsQuicListenerHttpStream) {
         return _srs_config->get_http_stream_quic_ssl_cert();
     }
+
+    return "";
 }
 
 srs_error_t SrsQuicListener::on_udp_packet(SrsUdpMuxSocket* skt)
@@ -125,16 +127,20 @@ srs_error_t SrsQuicIoLoop::initialize()
 
 void SrsQuicIoLoop::subscribe(SrsQuicConnection* quic_conn)
 {
+    srs_trace("subscribe quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->subscribe(quic_conn);
 }
 
 void SrsQuicIoLoop::unsubscribe(SrsQuicConnection* quic_conn)
 {
+    srs_trace("unsubscribe quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->unsubscribe(quic_conn);
 }
 
 void SrsQuicIoLoop::remove(ISrsResource* resource)
 {
+    SrsQuicConnection* quic_conn = dynamic_cast<SrsQuicConnection*>(resource);
+    srs_trace("remove quic conn %s", quic_conn->get_conn_name().c_str());
     quic_conn_map_->remove(resource);
 }
 
@@ -153,7 +159,7 @@ srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* 
     size_t scid_len = 0;
 
     int ret = ngtcp2_pkt_decode_version_cid(&version, &dcid, &dcid_len, &scid, &scid_len, 
-            data, size, kSvScidLen);
+            data, size, kServerCidLen);
     if (ret != 0) {
         if (ret == 1) {
             return send_version_negotiation(skt, version, dcid, dcid_len, scid, scid_len);
@@ -243,7 +249,7 @@ srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener*
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
     }
-    string conn_id = quic_conn->get_conn_id();
+    string conn_id = quic_conn->get_scid();
     srs_trace("add new quic connection=%s", quic_conn_id_dump(conn_id).c_str());
     quic_conn_map_->add_with_name(conn_id, quic_conn);
     *p_conn = quic_conn;

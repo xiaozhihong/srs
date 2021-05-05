@@ -45,6 +45,8 @@ GTEST_DIR = ${GTEST_DIR}
 # Where to find user code.
 USER_DIR = .
 
+CXX = ${SRS_TOOL_CXX}
+
 # Flags passed to the preprocessor.
 CPPFLAGS += -I\$(GTEST_DIR)/include
 

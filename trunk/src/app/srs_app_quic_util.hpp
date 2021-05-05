@@ -52,9 +52,14 @@ extern int srs_generate_rand_data(uint8_t* dest, size_t destlen);
 // Return systime in ns resolution.
 extern ngtcp2_tstamp srs_get_system_time_for_quic();
 
+// TODO: FIXME: just for test.
+const uint64_t kStreamDataSize = 10 * 1024 * 1024;
+
 const size_t kTokenRandDatalen = 16;
 const uint8_t kTokenMagic = 0x36;
 const size_t kMaxTokenLen = 1 + sizeof(uint64_t) + 16 + kTokenRandDatalen;
+const int kServerCidLen = 10;
+const int kClientCidLen = 10;
 
 // Helper function to generate ngtcp2_crypto_aead.
 extern ngtcp2_crypto_aead crypto_aead_aes_128_gcm();

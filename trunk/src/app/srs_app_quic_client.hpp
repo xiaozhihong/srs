@@ -62,9 +62,6 @@ private:
         ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,
         uint8_t* token, const size_t tokenlen);
 
-	virtual uint8_t* get_static_secret();
-    virtual size_t get_static_secret_len();
-
 	virtual int handshake_completed();
 
 // SrsQuicClient API
