@@ -52,7 +52,7 @@ public:
     SrsQuicClient();
   	~SrsQuicClient();
 private:
-    srs_error_t create_udp_socket();
+    srs_error_t create_udp_socket(const std::string& ip);
     srs_error_t create_udp_io_thread();
 // Interface for SrsQuicTransport
 private:

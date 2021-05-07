@@ -88,7 +88,7 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
     return settings;
 }
 
-srs_error_t SrsQuicClient::create_udp_socket()
+srs_error_t SrsQuicClient::create_udp_socket(const std::string& ip)
 {
     srs_error_t err = srs_success;
 
@@ -102,9 +102,10 @@ srs_error_t SrsQuicClient::create_udp_socket()
 
     addrinfo* r  = NULL;
     SrsAutoFree(addrinfo, r);
-    if(getaddrinfo(NULL, "0", (const addrinfo*)&hints, &r)) {
-        return srs_error_new(ERROR_SYSTEM_IP_INVALID, "getaddrinfo hints=(%d,%d,%d)",
-            hints.ai_family, hints.ai_socktype, hints.ai_flags);
+    int ret = 0;
+    if((ret = getaddrinfo(ip.c_str(), "", (const addrinfo*)&hints, &r))) {
+        return srs_error_new(ERROR_SYSTEM_IP_INVALID, "getaddrinfo hints=(%d,%d,%d), err=%s",
+            hints.ai_family, hints.ai_socktype, hints.ai_flags, gai_strerror(ret));
     }
 
     int fd = 0;
@@ -222,7 +223,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
 {
     srs_error_t err = srs_success;
 
-    if ((err = create_udp_socket()) != srs_success) {
+    if ((err = create_udp_socket(ip)) != srs_success) {
         return srs_error_wrap(err, "create socket failed");
     }
 
