@@ -65,6 +65,11 @@ public:
     ~SrsQuicTlsServerContext();
 public:
     virtual srs_error_t init(const std::string& key, const std::string& cert);
+private:
+    srs_error_t generate_tls_cert_and_key();
+private:
+    X509* tls_cert_;
+    EVP_PKEY* tls_pkey_;
 };
 
 class SrsQuicTlsSession

@@ -279,10 +279,93 @@ srs_error_t SrsQuicTlsClientContext::init(const std::string& key, const std::str
 SrsQuicTlsServerContext::SrsQuicTlsServerContext()
     : SrsQuicTlsContext()
 {
+    tls_pkey_ = NULL;
+    tls_cert_ = NULL;
 }
 
 SrsQuicTlsServerContext::~SrsQuicTlsServerContext()
 {
+    if (tls_pkey_) {
+        EVP_PKEY_free(tls_pkey_);
+    }
+
+    if (tls_cert_) {
+        X509_free(tls_cert_);
+    }
+}
+
+srs_error_t SrsQuicTlsServerContext::generate_tls_cert_and_key()
+{
+	srs_error_t err = srs_success;
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L // v1.1.x
+    // Initialize SSL library by registering algorithms
+    // The SSL_library_init() and OpenSSL_add_ssl_algorithms() functions were deprecated in OpenSSL 1.1.0 by OPENSSL_init_ssl().
+    // @see https://www.openssl.org/docs/man1.1.0/man3/OpenSSL_add_ssl_algorithms.html
+    // @see https://web.archive.org/web/20150806185102/http://sctp.fh-muenster.de:80/dtls/dtls_udp_echo.c
+    OpenSSL_add_ssl_algorithms();
+#else
+    // As of version 1.1.0 OpenSSL will automatically allocate all resources that it needs so no explicit
+    // initialisation is required. Similarly it will also automatically deinitialise as required.
+    // @see https://www.openssl.org/docs/man1.1.0/man3/OPENSSL_init_ssl.html
+    // OPENSSL_init_ssl();
+#endif
+
+    // Create keys by RSA or ECDSA.
+    tls_pkey_ = EVP_PKEY_new();
+    srs_assert(tls_pkey_);
+    if (true) { // By RSA
+        RSA* rsa = RSA_new();
+        srs_assert(rsa);
+
+        // Initialize the big-number for private key.
+        BIGNUM* exponent = BN_new();
+        srs_assert(exponent);
+        BN_set_word(exponent, RSA_F4);
+
+        // Generates a key pair and stores it in the RSA structure provided in rsa.
+        // @see https://www.openssl.org/docs/man1.0.2/man3/RSA_generate_key_ex.html
+        int key_bits = 1024;
+        RSA_generate_key_ex(rsa, key_bits, exponent, NULL);
+
+        // @see https://www.openssl.org/docs/man1.1.0/man3/EVP_PKEY_type.html
+        srs_assert(EVP_PKEY_set1_RSA(tls_pkey_, rsa) == 1);
+
+        RSA_free(rsa);
+        BN_free(exponent);
+    }
+
+    // Create certificate, from previous generated pkey.
+    // TODO: Support ECDSA certificate.
+    tls_cert_ = X509_new();
+    srs_assert(tls_cert_);
+    if (true) {
+        X509_NAME* subject = X509_NAME_new();
+        srs_assert(subject);
+
+        int serial = rand();
+        ASN1_INTEGER_set(X509_get_serialNumber(tls_cert_), serial);
+
+        const std::string& aor = RTMP_SIG_SRS_DOMAIN;
+        X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, (unsigned char *) aor.data(), aor.size(), -1, 0);
+
+        X509_set_issuer_name(tls_cert_, subject);
+        X509_set_subject_name(tls_cert_, subject);
+
+        int expire_day = 365;
+        const long cert_duration = 60*60*24*expire_day;
+
+        X509_gmtime_adj(X509_get_notBefore(tls_cert_), 0);
+        X509_gmtime_adj(X509_get_notAfter(tls_cert_), cert_duration);
+
+        X509_set_version(tls_cert_, 2);
+        srs_assert(X509_set_pubkey(tls_cert_, tls_pkey_) == 1);
+        srs_assert(X509_sign(tls_cert_, tls_pkey_, EVP_sha1()) != 0);
+
+        X509_NAME_free(subject);
+    }
+
+    return err;
 }
 
 srs_error_t SrsQuicTlsServerContext::init(const std::string& key, const std::string& cert)
@@ -320,14 +403,30 @@ srs_error_t SrsQuicTlsServerContext::init(const std::string& key, const std::str
 
     SSL_CTX_set_default_verify_paths(ssl_ctx_);
 
-    if (SSL_CTX_use_PrivateKey_file(ssl_ctx_, key.c_str(), SSL_FILETYPE_PEM) != 1) {
-        return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_PrivateKey_file failed, err=%s", 
-            ERR_error_string(ERR_get_error(), NULL));
-    }
+    if (key.empty() && cert.empty()) {
+        if ((err = generate_tls_cert_and_key()) != srs_success) {
+            return srs_error_wrap(err, "generate tls cert/key failed");
+        }
 
-    if (SSL_CTX_use_certificate_chain_file(ssl_ctx_, cert.c_str()) != 1) {
-        return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_certificate_chain_file failed, err=%s", 
-            ERR_error_string(ERR_get_error(), NULL));
+        if (SSL_CTX_use_PrivateKey(ssl_ctx_, tls_pkey_) != 1) {
+            return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_PrivateKey failed, err=%s", 
+                ERR_error_string(ERR_get_error(), NULL));
+        }
+
+        if (SSL_CTX_use_certificate(ssl_ctx_, tls_cert_) != 1) {
+            return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_certificate failed, err=%s", 
+                ERR_error_string(ERR_get_error(), NULL));
+        }
+    } else {
+        if (SSL_CTX_use_PrivateKey_file(ssl_ctx_, key.c_str(), SSL_FILETYPE_PEM) != 1) {
+            return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_PrivateKey_file failed, err=%s", 
+                ERR_error_string(ERR_get_error(), NULL));
+        }
+
+        if (SSL_CTX_use_certificate_chain_file(ssl_ctx_, cert.c_str()) != 1) {
+            return srs_error_new(ERROR_QUIC_TLS, "SSL_CTX_use_certificate_chain_file failed, err=%s", 
+                ERR_error_string(ERR_get_error(), NULL));
+        }
     }
 
     if (SSL_CTX_check_private_key(ssl_ctx_) != 1) {
