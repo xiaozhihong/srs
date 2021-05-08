@@ -46,7 +46,7 @@ class SrsQuicTlsContext;
 class SrsQuicTlsSession;
 class SrsQuicToken;
 class SrsQuicStream;
-class SrsQuicTransport;;
+class SrsQuicTransport;
 
 enum SrsQuicStreamDirection
 {
@@ -143,6 +143,9 @@ friend class SrsQuicStream;
 public:
     SrsQuicTransport();
   	virtual ~SrsQuicTransport();
+public:
+    void on_ngtcp2_log(const char* fmt, va_list ap);
+    void on_qlog(uint32_t flags, const void *data, size_t datalen);
 protected:
     // Helper function to buid struct ngtcp2_path.
     ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
@@ -226,6 +229,9 @@ public:
 
 private:
     SrsQuicStream* find_stream(int64_t stream_id);
+
+protected:
+    void open_qlog_file(const std::string& conn_id);
 
 protected:
     SrsHourGlass* timer_;

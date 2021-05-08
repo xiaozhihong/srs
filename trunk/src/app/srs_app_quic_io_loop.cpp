@@ -175,11 +175,15 @@ srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* 
     if (true) {
         string connid(reinterpret_cast<const char*>(dcid), dcid_len);
         ISrsResource* conn = quic_conn_map_->find_by_name(connid);
-        if (conn) {
+        quic_conn = dynamic_cast<SrsQuicConnection*>(conn);
+        if (quic_conn) {
             // Switch to the quic_conn to write logs to the context.
-            quic_conn = dynamic_cast<SrsQuicConnection*>(conn);
             quic_conn->switch_to_context();
         } else {
+            if (conn) {
+                return srs_error_new(ERROR_QUIC_CONN, "maybe duplicated conn %s", 
+                    quic_conn_id_dump(dcid, dcid_len).c_str());
+            }
             if ((err = new_connection(skt, listener, &quic_conn)) != srs_success) {
                 return srs_error_wrap(err, "create new quic connection failed");
             }

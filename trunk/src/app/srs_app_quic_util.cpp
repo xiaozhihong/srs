@@ -99,30 +99,18 @@ ngtcp2_crypto_md crypto_md_sha256()
 void ngtcp2_log_handle(void *user_data, const char *fmt, ...) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    if (! quic_transport->is_blocking()) {
-        return;
-    }
-
     va_list ap;
-
-    static char buf[64*1024];
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    quic_transport->on_ngtcp2_log(fmt, ap);
     va_end(ap);
-
-    // TODO: FIXME: config if we log ngtcp2 quic log
-    srs_trace("ngtcp2 quic log # %s", buf);
 }
 
 void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen)
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    if (! quic_transport->is_blocking()) {
-        return;
+    if (quic_transport) {
+        quic_transport->on_qlog(flags, data, datalen);
     }
-
-    // TODO: FIXME: config if we log qlog
-    srs_trace("QLOG # %s", string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
 string dump_quic_conn_stat(ngtcp2_conn* conn)
