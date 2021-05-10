@@ -168,7 +168,7 @@ int SrsQuicStreamBuffer::write(const void* buf, int buf_size)
         return 0;
     }
 
-    int size_write = buf_size;
+    int size_write = 0;
     if (write_pos_ >= read_pos_) {
         size_write = srs_min(capacity_ - (write_pos_ - read_pos_), buf_size);
         int write_size_to_buffer_end = srs_min(capacity_ - write_pos_, size_write);
@@ -176,7 +176,7 @@ int SrsQuicStreamBuffer::write(const void* buf, int buf_size)
 
         int write_size_from_buffer_begin = size_write - write_size_to_buffer_end;
         if (write_size_from_buffer_begin > 0) {
-            memcpy(buffer_, buf, write_size_from_buffer_begin);
+            memcpy(buffer_, buf + write_size_to_buffer_end, write_size_from_buffer_begin);
         }
 
         write_pos_ += size_write;
@@ -206,7 +206,7 @@ int SrsQuicStreamBuffer::read(void* buf, int buf_size)
             memcpy(buf, buffer_ + read_pos_, size_read);
         }
         read_pos_ += size_read;
-    } else if (write_pos_ >= read_pos_) {
+    } else if (write_pos_ > read_pos_) {
         size_read = srs_min((write_pos_ - read_pos_), buf_size);
         if (buf) {
             memcpy(buf, buffer_ + read_pos_, size_read);
@@ -220,7 +220,7 @@ int SrsQuicStreamBuffer::read(void* buf, int buf_size)
 
         int size_read_from_buffer_begin = srs_min(buf_size - size_read_to_buffer_end, write_pos_);
         if (size_read_from_buffer_begin && buf) {
-            memcpy(buf, buffer_, size_read_from_buffer_begin);
+            memcpy(buf + size_read_to_buffer_end, buffer_, size_read_from_buffer_begin);
         }
 
         size_read = size_read_to_buffer_end + size_read_from_buffer_begin;
@@ -445,9 +445,9 @@ SrsQuicTransport::~SrsQuicTransport()
 
 void SrsQuicTransport::on_ngtcp2_log(const char* fmt, va_list ap)
 {
-    // if (! is_blocking()) {
-    //     return;
-    // }
+    if (! is_blocking()) {
+        return;
+    }
 
     static char buf[64*1024];
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -767,6 +767,7 @@ int SrsQuicTransport::get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, siz
 {
     cid->datalen = cidlen;
     srs_generate_rand_data(cid->data, cid->datalen);
+    srs_trace("generate new conn id %s", quic_conn_id_dump(cid->data, cid->datalen).c_str());
 
     ngtcp2_crypto_md md = crypto_md_sha256();
     if (ngtcp2_crypto_generate_stateless_reset_token(token, &md, get_static_secret(), 
