@@ -33,8 +33,6 @@ using namespace std;
 #include <srs_kernel_log.hpp>
 #include <srs_app_utility.hpp>
 #include <srs_app_config.hpp>
-#include <srs_app_server.hpp>
-#include <srs_app_quic_server.hpp>
 #include <srs_app_quic_client.hpp>
 #include <srs_service_utility.hpp>
 #include <srs_service_st.hpp>
@@ -468,7 +466,7 @@ void SrsQuicTransport::on_qlog(uint32_t flags, const void *data, size_t datalen)
     // }
 
     // TODO: FIXME: config if we log qlog
-    srs_trace("quic_conn %s  QLOG # %s", get_conn_name().c_str(), string(reinterpret_cast<const char*>(data), datalen).c_str());
+    srs_trace("quic_conn %s QLOG # %s", get_conn_name().c_str(), string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
 ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
@@ -893,7 +891,8 @@ srs_error_t SrsQuicTransport::write_protocol_data()
 
     int nappend = 0;
     while (true) {
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+        // TODO: FIXME: use NGTCP2_WRITE_STREAM_FLAG_MORE instead to improve pps.
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
         // -1 means no stream data, it's quic control msg(ACK...)
         int64_t stream_id = -1;
 
@@ -1037,7 +1036,8 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
 
     int nappend = 0;
     while (! buffer.empty()) {
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+        // TODO: FIXME: use NGTCP2_WRITE_STREAM_FLAG_MORE instead to improve pps.
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
 
         if (ngtcp2_conn_get_max_data_left(conn_) < packet_buf_size) {
             set_last_error(SrsQuicErrorAgain);

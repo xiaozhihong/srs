@@ -139,7 +139,6 @@ private:
 // Quic transport base class, process quic packets.
 class SrsQuicTransport : virtual public ISrsHourGlass
 {
-friend class SrsQuicStream;
 public:
     SrsQuicTransport();
   	virtual ~SrsQuicTransport();
@@ -171,9 +170,9 @@ public:
     void set_last_error(SrsQuicError err) { last_err_ = err; }
     void set_blocking(bool b) { blocking_ = b; }
     bool is_blocking() const { return blocking_; }
+    int write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& buffer);
 private:
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
-    int write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& buffer);
 private:
 	srs_error_t update_timer();
     srs_error_t on_timer();
