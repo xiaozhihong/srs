@@ -130,9 +130,12 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
             }
         }
 
+        // TODO: FIXME: config auto quic forward behavior.
         if (err != srs_success) {
+            bool rtc_forward_auto_retry = false;
             if (srs_error_code(err) == ERROR_RTC_NO_NEED_FORWARD || 
-                srs_error_code(err) == ERROR_RTC_CLUSTER_REDIRECT) {
+                srs_error_code(err) == ERROR_RTC_CLUSTER_REDIRECT ||
+                ! rtc_forward_auto_retry) {
                 srs_warn("Rtc forwrd client, error=%s", srs_error_desc(err).c_str());
                 break;
             }

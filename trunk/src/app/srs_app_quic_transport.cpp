@@ -194,6 +194,8 @@ int SrsQuicStreamBuffer::write(const void* buf, int buf_size)
 
 int SrsQuicStreamBuffer::read(void* buf, int buf_size)
 {
+    srs_assert(buf_size > 0);
+
     if (size_ == 0) {
         srs_error("buffer empty");
         return 0;
@@ -280,6 +282,7 @@ SrsQuicStream::~SrsQuicStream()
 
 int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
 {
+    srs_assert(size > 0);
     int nb = send_buffer_.write(buf, size);
     if (nb < size) {
         quic_transport_->set_blocking(true);
@@ -383,6 +386,8 @@ SrsQuicTransport::SrsQuicTransport()
     udp_fd_ = NULL;
     local_addr_len_ = 0;
     remote_addr_len_ = 0;
+    udp_send_buffer_size_  = NGTCP2_MAX_PKTLEN_IPV4;
+    udp_send_buffer_ = new uint8_t[udp_send_buffer_size_];
     tls_context_ = NULL;
     tls_session_ = NULL;
     quic_token_ = NULL;
@@ -453,7 +458,7 @@ void SrsQuicTransport::on_ngtcp2_log(const char* fmt, va_list ap)
     vsnprintf(buf, sizeof(buf), fmt, ap);
 
     // TODO: FIXME: config if we log ngtcp2 quic log
-    srs_trace("ngtcp2 quic log # %s", buf);
+    // srs_trace("ngtcp2 quic log # %s", buf);
 }
 
 void SrsQuicTransport::on_qlog(uint32_t flags, const void *data, size_t datalen) 
@@ -878,7 +883,6 @@ srs_error_t SrsQuicTransport::write_protocol_data()
         return send_connection_close();
     }
 
-    uint8_t buf[NGTCP2_MAX_PKTLEN_IPV4] = {0};
     ngtcp2_ssize ndatalen;
 
     sockaddr_storage local_addr_storage;
@@ -887,13 +891,15 @@ srs_error_t SrsQuicTransport::write_protocol_data()
     path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
     path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
 
+    int nappend = 0;
     while (true) {
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
         // -1 means no stream data, it's quic control msg(ACK...)
         int64_t stream_id = -1;
 
-        int nwrite = ngtcp2_conn_write_stream(conn_, &path, NULL, buf, NGTCP2_MAX_PKTLEN_IPV4, 
-				&ndatalen, flags, stream_id, NULL, 0, srs_get_system_time_for_quic());
+        int nwrite = ngtcp2_conn_write_stream(conn_, &path, NULL, udp_send_buffer_, 
+                udp_send_buffer_size_, &ndatalen, flags, stream_id, NULL, 0, 
+                srs_get_system_time_for_quic());
 
         if (nwrite < 0) {
             switch (nwrite) {
@@ -903,6 +909,10 @@ srs_error_t SrsQuicTransport::write_protocol_data()
                 // write failed becasuse stream in half close(write direction).
                 case NGTCP2_ERR_STREAM_SHUT_WR:
                     break;
+                case NGTCP2_ERR_WRITE_MORE:
+                    srs_trace("quic append write %d", ndatalen);
+                    nappend = ndatalen;
+                    continue;
                 default: {
                     srs_error("quic conn %s write stream %ld failed, err=%s", 
                         get_conn_name().c_str(), stream_id, ngtcp2_strerror(nwrite));
@@ -915,7 +925,12 @@ srs_error_t SrsQuicTransport::write_protocol_data()
             break;
         }
 
-        if (send_packet(&path, buf, nwrite) <= 0) {
+        if (nappend > 0) {
+            srs_trace("quic append_write %d data, nb %d", nappend, nwrite);
+            nappend = 0;
+        }
+
+        if (send_packet(&path, udp_send_buffer_, nwrite) <= 0) {
             break;
         }
     }
@@ -1020,15 +1035,16 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
     path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
     path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
 
+    int nappend = 0;
     while (! buffer.empty()) {
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
 
         if (ngtcp2_conn_get_max_data_left(conn_) < packet_buf_size) {
             set_last_error(SrsQuicErrorAgain);
             return -1;
         }
 
-        int nwrite = ngtcp2_conn_write_stream(conn_, &path, NULL, packet_buf, packet_buf_size, 
+        int nwrite = ngtcp2_conn_write_stream(conn_, &path, NULL, udp_send_buffer_, udp_send_buffer_size_, 
                                               &ndatalen, flags, stream_id, (uint8_t*)buffer.data(), 
                                               buffer.sequent_size(), srs_get_system_time_for_quic());
 
@@ -1049,6 +1065,10 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
                     set_last_error(SrsQuicErrorIO);
                     return -1;
                 }
+                case NGTCP2_ERR_WRITE_MORE:
+                    buffer.skip(ndatalen);
+                    nappend = ndatalen;
+                    continue;
                 default: {
                     srs_error("quic conn %s write stream %ld failed, err=%s", 
                         get_conn_name().c_str(), stream_id, ngtcp2_strerror(nwrite));
@@ -1063,10 +1083,19 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
             }
         }
 
-        buffer.skip(ndatalen);
+        if (ndatalen > 0) {
+            buffer.skip(ndatalen);
+        }
+
+        if (nappend > 0) {
+            srs_trace("quic append_write %d data, nb %d", nappend, nwrite);
+            nappend = 0;
+        }
+
+
         // nwrite is the length of quic packet, include data and header
         // ndatalen is the length of data.
-        if (send_packet(&path, packet_buf, nwrite) <= 0) {
+        if (send_packet(&path, udp_send_buffer_, nwrite) <= 0) {
             set_last_error(SrsQuicErrorIO);
             return -1;
         }

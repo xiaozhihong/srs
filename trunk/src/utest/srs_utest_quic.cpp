@@ -85,3 +85,103 @@ TEST(QuicStreamBuffer, TestWriteReadWrap)
     EXPECT_EQ(1024, buffer.read(buf, 1024));
     EXPECT_TRUE(buffer.empty());
 }
+
+TEST(QuicStreamBuffer, TestWriteReadContent)
+{
+    SrsQuicStreamBuffer buffer(1024);
+    int random_buffer_size = 600 + 800 + 400;
+    char* random_buffer = new char[random_buffer_size];
+    string req(random_buffer, random_buffer_size);
+    int offset = 0;
+    int nb = 0;
+    nb = buffer.write(req.data() + offset, 600);
+    EXPECT_EQ(nb, 600);
+    offset += 600;
+
+    string rsp;
+    char buf[1024];
+    nb = buffer.read(buf, 380);
+    EXPECT_TRUE(nb == 380);
+    rsp.append(buf, nb);
+
+    nb = buffer.write(req.data() + offset, 800);
+    EXPECT_EQ(nb, 800);
+    offset += 800;
+
+    nb = buffer.read(buf, 420);
+    EXPECT_TRUE(nb == 420);
+    rsp.append(buf, nb);
+
+    nb = buffer.read(buf, 500);
+    EXPECT_TRUE(nb == 500);
+    rsp.append(buf, nb);
+
+    nb = buffer.write(req.data() + offset, 400);
+    EXPECT_EQ(nb, 400);
+    offset += 400;
+    
+    nb = buffer.read(buf, 500);
+    EXPECT_TRUE(nb == 500);
+    rsp.append(buf, nb);
+    EXPECT_TRUE(buffer.empty());
+
+    EXPECT_TRUE(rsp == req);
+}
+
+TEST(QuicStreamBuffer, TestWriteReadContentMulti)
+{
+    SrsQuicStreamBuffer buffer(1024);
+    int random_buffer_size = 1024*73;
+    char* random_buffer = new char[random_buffer_size];
+    string req(random_buffer, random_buffer_size);
+
+    int offset = 0;
+    string rsp;
+    char buf[1024];
+    int segment = 73;
+    for (int i = 0; i < random_buffer_size / segment; ++i) {
+        int nb = 0;
+        nb = buffer.write(req.data() + offset, segment);
+        EXPECT_EQ(nb, segment);
+        offset += segment;
+
+        for (int i = 0; i < segment; ++i) {
+            nb = buffer.read(buf, 1);
+            EXPECT_TRUE(nb == 1);
+            rsp.append(buf, nb);
+        }
+
+        EXPECT_TRUE(buffer.empty());
+    }
+
+    EXPECT_TRUE(rsp == req);
+}
+
+TEST(QuicStreamBuffer, TestWriteReadContentSkip)
+{
+    SrsQuicStreamBuffer buffer(1024);
+    int random_buffer_size = 1015*73;
+    char* random_buffer = new char[random_buffer_size];
+    string req(random_buffer, random_buffer_size);
+
+    int offset = 0;
+    string rsp;
+    char buf[1024];
+    int segment = 73;
+    for (int i = 0; i < random_buffer_size / segment; ++i) {
+        int nb = 0;
+        nb = buffer.write(req.data() + offset, segment);
+        EXPECT_EQ(nb, segment);
+        offset += segment;
+
+        const uint8_t* data = buffer.data();
+        size_t sequent_size = buffer.sequent_size();
+        memcpy(buf, data, sequent_size);
+        buffer.skip(sequent_size);
+        rsp.append(buf, sequent_size);
+
+        // EXPECT_TRUE(buffer.empty());
+    }
+
+    EXPECT_TRUE(rsp == req);
+}

@@ -257,6 +257,9 @@ protected:
         std::deque<std::string> queue;
     } crypto_buffer_[3];
 
+    uint8_t* udp_send_buffer_;
+    int udp_send_buffer_size_;
+
     SrsQuicTlsContext* tls_context_;
     SrsQuicTlsSession* tls_session_;
     SrsQuicToken* quic_token_;
