@@ -293,7 +293,7 @@ srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client
 
     char* ctrl_response = new char[body_len];
     if ((err = read_body(quic_client, rtc_forward_stream, ctrl_response, body_len, timeout_)) != srs_success) {
-        return srs_error_wrap(err, "read body failed");
+        return srs_error_wrap(err, "read body size %d failed", body_len);
     }
 
     rsp_json.append(ctrl_response, body_len);
@@ -353,7 +353,7 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         char* rtp_data = new char[body_len];
         SrsAutoFreeA(char, rtp_data);
         if ((err = read_body(quic_client, rtc_forward_stream, rtp_data, body_len, timeout_)) != srs_success) {
-            return srs_error_wrap(err, "read body failed");
+            return srs_error_wrap(err, "read body size %d failed", body_len);
         }
 
         SrsRtpPacket2* pkt = _srs_rtp_cache->allocate();

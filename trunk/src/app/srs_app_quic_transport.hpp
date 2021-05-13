@@ -171,10 +171,10 @@ public:
     void set_blocking(bool b) { blocking_ = b; }
     bool is_blocking() const { return blocking_; }
     int write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& buffer);
+	srs_error_t update_timer();
 private:
     void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
 private:
-	srs_error_t update_timer();
     srs_error_t on_timer();
 private:
     srs_error_t on_error();

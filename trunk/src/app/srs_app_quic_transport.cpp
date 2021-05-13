@@ -307,6 +307,7 @@ int SrsQuicStream::write(const void* buf, int size, srs_utime_t timeout)
 
     quic_transport_->set_blocking(false);
     quic_transport_->write_stream_data(stream_id_, send_buffer_);
+
     return size;
 }
 
@@ -569,7 +570,7 @@ srs_error_t SrsQuicTransport::update_timer()
 
     ngtcp2_tstamp now = srs_get_system_time_for_quic();
 
-    int64_t delta_ms = expiry < now ? 1 : (expiry - now) /  NGTCP2_MILLISECONDS;
+    int64_t delta_ms = expiry < now ? 0 : (expiry - now) /  NGTCP2_MILLISECONDS;
 
     if ((err = timer_->tick(SRS_TICKID_QUIC_TIMER, delta_ms * SRS_UTIME_MILLISECONDS)) != srs_success) {
         return srs_error_wrap(err, "quic tick");
