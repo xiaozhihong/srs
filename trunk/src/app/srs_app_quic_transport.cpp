@@ -476,10 +476,9 @@ ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const sockle
     ngtcp2_path path;
     path.local.addr = local_addr;
     path.local.addrlen = local_addrlen;
-    path.local.user_data = NULL;
     path.remote.addr = remote_addr;
     path.remote.addrlen = remote_addrlen;
-    path.remote.user_data = NULL;
+    path.user_data = NULL;
 
     return path;
 }

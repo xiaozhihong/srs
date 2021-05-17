@@ -59,7 +59,8 @@ public:
     srs_error_t on_udp_packet(SrsUdpMuxSocket* skt, const uint8_t* data, int size);
 // Interface SrsQuicTransport
 private:
-    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
+    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen);
+    virtual ngtcp2_transport_params build_quic_transport_params(ngtcp2_cid* original_dcid);
     virtual int handshake_completed();
     virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
                 sockaddr* remote_addr, const socklen_t remote_addrlen,

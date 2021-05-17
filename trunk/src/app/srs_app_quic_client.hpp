@@ -56,7 +56,8 @@ private:
     srs_error_t create_udp_io_thread();
 // Interface for SrsQuicTransport
 private:
-    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid);
+    virtual ngtcp2_settings build_quic_settings(uint8_t* token , size_t tokenlen);
+    virtual ngtcp2_transport_params build_quic_transport_params(ngtcp2_cid* original_dcid);
     virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
         sockaddr* remote_addr, const socklen_t remote_addrlen,
         ngtcp2_cid* scid, ngtcp2_cid* dcid, const uint32_t version,

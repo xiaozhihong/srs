@@ -150,7 +150,8 @@ protected:
     ngtcp2_path build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
                                 sockaddr* remote_addr, const socklen_t remote_addrlen);
     // Helper function to build quic settings, client/server role have different settings.
-    virtual ngtcp2_settings build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid) = 0;
+    virtual ngtcp2_settings build_quic_settings(uint8_t* token, size_t tokenlen) = 0;
+    virtual ngtcp2_transport_params build_quic_transport_params(ngtcp2_cid* original_dcid) = 0;
 public:
     virtual srs_error_t init_timer();
 	virtual srs_error_t init(sockaddr* local_addr, const socklen_t local_addrlen,
@@ -237,6 +238,7 @@ protected:
 protected:
     ngtcp2_callbacks cb_;
     ngtcp2_settings settings_;
+    ngtcp2_transport_params transport_params_;
     ngtcp2_conn* conn_;
     ngtcp2_cid scid_;
     ngtcp2_cid dcid_;

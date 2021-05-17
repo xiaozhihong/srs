@@ -91,7 +91,7 @@ srs_error_t SrsQuicConnection::on_udp_packet(SrsUdpMuxSocket* skt, const uint8_t
     return on_data(&path, data, size);
 }
 
-ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t tokenlen, ngtcp2_cid* original_dcid)
+ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t tokenlen)
 {
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -106,7 +106,14 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
   	settings.initial_rtt = 10 * NGTCP2_MILLISECONDS;
 
-    ngtcp2_transport_params& params = settings.transport_params;
+    return settings;
+}
+
+ngtcp2_transport_params SrsQuicConnection::build_quic_transport_params(ngtcp2_cid* original_dcid)
+{
+    ngtcp2_transport_params params;
+    ngtcp2_transport_params_default(&params);
+
   	params.initial_max_stream_data_bidi_local = kStreamDataSize;
   	params.initial_max_stream_data_bidi_remote = kStreamDataSize;
   	params.initial_max_stream_data_uni = kStreamDataSize;;
@@ -121,7 +128,7 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
         params.original_dcid = *original_dcid;
     }
 
-    return settings;
+    return params;
 }
 
 int SrsQuicConnection::handshake_completed()
@@ -150,11 +157,12 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
 {
     srs_error_t err = srs_success;
 
-    settings_ = build_quic_settings(token, tokenlen, &origin_dcid_);
+    settings_ = build_quic_settings(token, tokenlen);
+    transport_params_ = build_quic_transport_params(&origin_dcid_);
 
     ngtcp2_path path = build_quic_path(local_addr, local_addrlen, remote_addr, remote_addrlen);
 
-    int ret = ngtcp2_conn_server_new(&conn_, dcid, scid, &path, version, &cb_, &settings_, NULL, this);
+    int ret = ngtcp2_conn_server_new(&conn_, dcid, scid, &path, version, &cb_, &settings_, &transport_params_, NULL, this);
 
     if (ret != 0) {
         return srs_error_new(ERROR_QUIC_CONN, "new quic conn failed, err=%s", ngtcp2_strerror(ret));

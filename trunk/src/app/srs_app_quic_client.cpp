@@ -62,7 +62,7 @@ SrsQuicClient::~SrsQuicClient()
     }
 }
 
-ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t tokenlen, ngtcp2_cid* original_dcid)
+ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t tokenlen)
 {
     ngtcp2_settings settings;
     ngtcp2_settings_default(&settings);
@@ -75,7 +75,14 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
   	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
   	settings.initial_rtt = 10 * NGTCP2_MILLISECONDS;
 
-	ngtcp2_transport_params& params = settings.transport_params;
+    return settings;
+}
+
+ngtcp2_transport_params SrsQuicClient::build_quic_transport_params(ngtcp2_cid* original_dcid)
+{
+	ngtcp2_transport_params params;
+    ngtcp2_transport_params_default(&params);
+
   	params.initial_max_stream_data_bidi_local = kStreamDataSize;
   	params.initial_max_stream_data_bidi_remote = kStreamDataSize;
   	params.initial_max_stream_data_uni = kStreamDataSize;;
@@ -85,7 +92,7 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
   	params.max_idle_timeout = 15 * NGTCP2_SECONDS;
   	params.active_connection_id_limit = 7;
 
-    return settings;
+    return params;
 }
 
 srs_error_t SrsQuicClient::create_udp_socket(const std::string& ip)
@@ -201,10 +208,11 @@ srs_error_t SrsQuicClient::init(sockaddr* local_addr, const socklen_t local_addr
     ngtcp2_path path = build_quic_path(reinterpret_cast<sockaddr*>(&local_addr_), 
         local_addr_len_, reinterpret_cast<sockaddr*>(&remote_addr_), remote_addr_len_);
 
-    settings_ = build_quic_settings(token, tokenlen, NULL);
+    settings_ = build_quic_settings(token, tokenlen);
+    transport_params_ = build_quic_transport_params(NULL);
 
     int ret = ngtcp2_conn_client_new(&conn_, dcid, scid, &path,
-        version, &cb_, &settings_, NULL, this);
+        version, &cb_, &settings_, &transport_params_, NULL, this);
 
     if (ret != 0) {
         return srs_error_new(ERROR_QUIC_CONN, "init quic client failed, err=%s", ngtcp2_strerror(ret));
