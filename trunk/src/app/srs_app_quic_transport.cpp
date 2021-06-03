@@ -449,9 +449,9 @@ SrsQuicTransport::~SrsQuicTransport()
 
 void SrsQuicTransport::on_ngtcp2_log(const char* fmt, va_list ap)
 {
-    if (! is_blocking()) {
-        return;
-    }
+    // if (! is_blocking()) {
+    //     return;
+    // }
 
     static char buf[64*1024];
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -467,7 +467,7 @@ void SrsQuicTransport::on_qlog(uint32_t flags, const void *data, size_t datalen)
     // }
 
     // TODO: FIXME: config if we log qlog
-    srs_trace("quic_conn %s QLOG # %s", get_conn_name().c_str(), string(reinterpret_cast<const char*>(data), datalen).c_str());
+    // srs_trace("quic_conn %s QLOG # %s", get_conn_name().c_str(), string(reinterpret_cast<const char*>(data), datalen).c_str());
 }
 
 ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,

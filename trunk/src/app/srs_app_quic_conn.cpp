@@ -103,7 +103,7 @@ ngtcp2_settings SrsQuicConnection::build_quic_settings(uint8_t* token, size_t to
   	settings.token.base = token;
   	settings.token.len = tokenlen;
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
-  	settings.cc_algo = NGTCP2_CC_ALGO_CUBIC;
+  	settings.cc_algo = NGTCP2_CC_ALGO_BBR;
   	settings.initial_rtt = 10 * NGTCP2_MILLISECONDS;
 
     return settings;
