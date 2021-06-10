@@ -678,7 +678,7 @@ if [[ $SRS_QUIC == YES ]]; then
             unzip ../../3rdparty/ngtcp2-master.zip && cd ngtcp2-master &&
             autoreconf -i && PKG_CONFIG_PATH="../../../objs/openssl/lib/pkgconfig" \
                 LDFLAGS="-Wl,-rpath,../../../objs/openssl/lib" ./configure \
-                --prefix=`pwd`/_release && make ${SRS_JOBS} && make install
+                --enable-lib-only --prefix=`pwd`/_release && make ${SRS_JOBS} && make install
         )
     fi
     # check status
