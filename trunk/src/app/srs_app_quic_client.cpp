@@ -73,7 +73,6 @@ ngtcp2_settings SrsQuicClient::build_quic_settings(uint8_t* token , size_t token
 	settings.initial_ts = srs_get_system_time_for_quic();
   	settings.max_udp_payload_size = NGTCP2_MAX_PKTLEN_IPV4;
   	settings.cc_algo = NGTCP2_CC_ALGO_BBR;
-  	settings.initial_rtt = 10 * NGTCP2_MILLISECONDS;
 
     return settings;
 }
@@ -235,7 +234,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_wrap(err, "create socket failed");
     }
 
-    // TODO: FIXME: global client udp loop.
+    // TODO: FIXME: We can register all quic client to quic io loop.
     if ((err = create_udp_io_thread()) != srs_success) {
         return srs_error_wrap(err, "create udp io thread failed");
     }

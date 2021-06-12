@@ -172,21 +172,21 @@ srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* 
         quic_conn_id_dump(dcid, dcid_len).c_str());
 
     SrsQuicConnection* quic_conn = NULL;
-    if (true) {
-        string connid(reinterpret_cast<const char*>(dcid), dcid_len);
-        ISrsResource* conn = quic_conn_map_->find_by_name(connid);
-        quic_conn = dynamic_cast<SrsQuicConnection*>(conn);
-        if (quic_conn) {
-            // Switch to the quic_conn to write logs to the context.
-            quic_conn->switch_to_context();
-        } else {
-            if (conn) {
-                return srs_error_new(ERROR_QUIC_CONN, "maybe duplicated conn %s", 
-                    quic_conn_id_dump(dcid, dcid_len).c_str());
-            }
-            if ((err = new_connection(skt, listener, &quic_conn)) != srs_success) {
-                return srs_error_wrap(err, "create new quic connection failed");
-            }
+    string connid(reinterpret_cast<const char*>(dcid), dcid_len);
+    ISrsResource* conn = quic_conn_map_->find_by_name(connid);
+    quic_conn = dynamic_cast<SrsQuicConnection*>(conn);
+    if (quic_conn) {
+        // Switch to the quic_conn to write logs to the context.
+        quic_conn->switch_to_context();
+    } else {
+        if (conn) {
+            return srs_error_new(ERROR_QUIC_CONN, "maybe duplicated conn %s", 
+                quic_conn_id_dump(dcid, dcid_len).c_str());
+        }
+        // TODO: FIXME: It maybe no a new connection,  when server side handshake loss and client 
+        // retry connect can occru, have not implement this case.
+        if ((err = new_connection(skt, listener, &quic_conn)) != srs_success) {
+            return srs_error_wrap(err, "create new quic connection failed");
         }
     }
 
@@ -203,12 +203,12 @@ srs_error_t SrsQuicIoLoop::send_version_negotiation(SrsUdpMuxSocket* skt, const 
         skt->peer_addrlen(), version));
 
     for (uint32_t v = NGTCP2_PROTO_VER_MIN; v <= NGTCP2_PROTO_VER_MAX; ++v) {
-				sv.push_back(v);
+        sv.push_back(v);
     }
 
     char buf[NGTCP2_MAX_PKTLEN_IPV4];
     int nb = ngtcp2_pkt_write_version_negotiation(reinterpret_cast<uint8_t*>(buf), sizeof(buf), 
-                (uint8_t)(random() % 256), dcid, dcid_len, scid, scid_len, sv.data(), sv.size());
+        (uint8_t)(random() % 256), dcid, dcid_len, scid, scid_len, sv.data(), sv.size());
     if (nb < 0) {
         return srs_error_new(ERROR_QUIC_CONN, "version negotiation failed, ret=%d", nb);
     }
