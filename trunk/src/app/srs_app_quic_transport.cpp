@@ -174,7 +174,7 @@ int SrsQuicStreamBuffer::write(const void* buf, int buf_size)
 
         int write_size_from_buffer_begin = size_write - write_size_to_buffer_end;
         if (write_size_from_buffer_begin > 0) {
-            memcpy(buffer_, buf + write_size_to_buffer_end, write_size_from_buffer_begin);
+            memcpy(buffer_, static_cast<const uint8_t*>(buf) + write_size_to_buffer_end, write_size_from_buffer_begin);
         }
 
         write_pos_ += size_write;
@@ -220,7 +220,7 @@ int SrsQuicStreamBuffer::read(void* buf, int buf_size)
 
         int size_read_from_buffer_begin = srs_min(buf_size - size_read_to_buffer_end, write_pos_);
         if (size_read_from_buffer_begin && buf) {
-            memcpy(buf + size_read_to_buffer_end, buffer_, size_read_from_buffer_begin);
+            memcpy(static_cast<uint8_t*>(buf) + size_read_to_buffer_end, buffer_, size_read_from_buffer_begin);
         }
 
         size_read = size_read_to_buffer_end + size_read_from_buffer_begin;
@@ -449,25 +449,21 @@ SrsQuicTransport::~SrsQuicTransport()
 
 void SrsQuicTransport::on_ngtcp2_log(const char* fmt, va_list ap)
 {
-    // if (! is_blocking()) {
-    //     return;
-    // }
-
     static char buf[64*1024];
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-
-    // TODO: FIXME: config if we log ngtcp2 quic log
-    // srs_trace("ngtcp2 quic log # %s", buf);
+    if (false) {
+        // TODO: FIXME: config if we log ngtcp2 quic log
+        vsnprintf(buf, sizeof(buf), fmt, ap);
+        srs_trace("ngtcp2 quic log # %s", buf);
+    }
 }
 
 void SrsQuicTransport::on_qlog(uint32_t flags, const void *data, size_t datalen) 
 {
-    // if (! is_blocking()) {
-    //     return;
-    // }
-
-    // TODO: FIXME: config if we log qlog
-    // srs_trace("quic_conn %s QLOG # %s", get_conn_name().c_str(), string(reinterpret_cast<const char*>(data), datalen).c_str());
+    if (false) {
+        // TODO: FIXME: config if we log qlog
+        srs_trace("quic_conn %s QLOG # %s", get_conn_name().c_str(), 
+            string(reinterpret_cast<const char*>(data), datalen).c_str());
+    }
 }
 
 ngtcp2_path SrsQuicTransport::build_quic_path(sockaddr* local_addr, const socklen_t local_addrlen,
@@ -889,10 +885,8 @@ srs_error_t SrsQuicTransport::write_protocol_data()
     path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
     path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
 
-    int nappend = 0;
     while (true) {
-        // TODO: FIXME: use NGTCP2_WRITE_STREAM_FLAG_MORE instead to improve pps.
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
         // -1 means no stream data, it's quic control msg(ACK...)
         int64_t stream_id = -1;
 
@@ -909,8 +903,6 @@ srs_error_t SrsQuicTransport::write_protocol_data()
                 case NGTCP2_ERR_STREAM_SHUT_WR:
                     break;
                 case NGTCP2_ERR_WRITE_MORE:
-                    srs_trace("quic append write %d", ndatalen);
-                    nappend = ndatalen;
                     continue;
                 default: {
                     srs_error("quic conn %s write stream %ld failed, err=%s", 
@@ -922,11 +914,6 @@ srs_error_t SrsQuicTransport::write_protocol_data()
 
         if (nwrite == 0) {
             break;
-        }
-
-        if (nappend > 0) {
-            srs_trace("quic append_write %d data, nb %d", nappend, nwrite);
-            nappend = 0;
         }
 
         if (send_packet(&path, udp_send_buffer_, nwrite) <= 0) {
@@ -1024,8 +1011,6 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
         return -1;
     }
 
-    const int packet_buf_size = NGTCP2_MAX_PKTLEN_IPV4;
-    uint8_t packet_buf[packet_buf_size];
     ngtcp2_ssize ndatalen = 0;
 
     sockaddr_storage local_addr_storage;
@@ -1034,12 +1019,10 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
     path.local.addr = reinterpret_cast<sockaddr *>(&local_addr_storage);
     path.remote.addr = reinterpret_cast<sockaddr *>(&remote_addr_storage);
 
-    int nappend = 0;
     while (! buffer.empty()) {
-        // TODO: FIXME: use NGTCP2_WRITE_STREAM_FLAG_MORE instead to improve pps.
-        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+        uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
 
-        if (ngtcp2_conn_get_max_data_left(conn_) < packet_buf_size) {
+        if (ngtcp2_conn_get_max_data_left(conn_) < NGTCP2_MAX_PKTLEN_IPV4) {
             set_last_error(SrsQuicErrorAgain);
             return -1;
         }
@@ -1067,7 +1050,6 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
                 }
                 case NGTCP2_ERR_WRITE_MORE:
                     buffer.skip(ndatalen);
-                    nappend = ndatalen;
                     continue;
                 default: {
                     srs_error("quic conn %s write stream %ld failed, err=%s", 
@@ -1086,12 +1068,6 @@ int SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& 
         if (ndatalen > 0) {
             buffer.skip(ndatalen);
         }
-
-        if (nappend > 0) {
-            srs_trace("quic append_write %d data, nb %d", nappend, nwrite);
-            nappend = 0;
-        }
-
 
         // nwrite is the length of quic packet, include data and header
         // ndatalen is the length of data.
