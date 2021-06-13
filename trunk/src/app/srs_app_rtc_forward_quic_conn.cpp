@@ -457,7 +457,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         if (!pkt) {
             consumer->wait(1);
             // TODO: FIXME: bad code.
-            if ((err = process_req(SRS_UTIME_MILLISECONDS)) != srs_success) {
+            if ((err = process_req(0)) != srs_success) {
                 if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
                     return srs_error_wrap(err, "quic stream error");
                 }

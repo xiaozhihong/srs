@@ -351,6 +351,9 @@ SrsRtcSource::SrsRtcSource()
     bridger_ = NULL;
 
     pli_for_rtmp_ = pli_elapsed_ = 0;
+
+    forward_level_ = 0;
+    prev_touch_time_ = srs_get_system_time();
 }
 
 SrsRtcSource::~SrsRtcSource()
