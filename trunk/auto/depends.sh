@@ -33,16 +33,12 @@ echo "Required tools are ok."
 OS_IS_UBUNTU=NO
 function Ubuntu_prepare()
 {
-    if [ $SRS_CUBIE = YES ]; then
-        echo "For cubieboard, please use ubuntu prepare."
-    else
-        uname -v|grep Ubuntu >/dev/null 2>&1
-        ret=$?; if [[ 0 -ne $ret ]]; then
-            # for debian, we think it's ubuntu also.
-            # for example, the wheezy/sid which is debian armv7 linux, can not identified by uname -v.
-            if [[ ! -f /etc/debian_version ]]; then
-                return 0;
-            fi
+    uname -v|grep Ubuntu >/dev/null 2>&1
+    ret=$?; if [[ 0 -ne $ret ]]; then
+        # for debian, we think it's ubuntu also.
+        # for example, the wheezy/sid which is debian armv7 linux, can not identified by uname -v.
+        if [[ ! -f /etc/debian_version ]]; then
+            return 0;
         fi
     fi
 
@@ -99,6 +95,23 @@ function Ubuntu_prepare()
             require_sudoer "sudo apt-get install -y --force-yes valgrind-dbg"
             sudo apt-get install -y --force-yes valgrind-dev; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
             echo "The valgrind-dev is installed."
+        fi
+    fi
+
+    if [[ $SRS_SRT == YES ]]; then
+        echo "SRT enable, install depend tools"
+        tclsh <<< "exit" >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing tcl."
+            require_sudoer "sudo apt-get install -y --force-yes tcl"
+            sudo apt-get install -y --force-yes tcl; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "The tcl is installed."
+        fi
+
+        cmake --help >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing cmake."
+            require_sudoer "sudo apt-get install -y --force-yes cmake"
+            sudo apt-get install -y --force-yes cmake; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "The cmake is installed."
         fi
     fi
 
@@ -178,6 +191,23 @@ function Centos_prepare()
             require_sudoer "sudo yum install -y valgrind-devel"
             sudo yum install -y valgrind-devel; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
             echo "The valgrind-devel is installed."
+        fi
+    fi
+
+    if [[ $SRS_SRT == YES ]]; then
+        echo "SRT enable, install depend tools"
+        tclsh <<< "exit" >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing tcl."
+            require_sudoer "sudo yum install -y tcl"
+            sudo yum install -y tcl; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "The tcl is installed."
+        fi
+
+        cmake --help >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing cmake."
+            require_sudoer "sudo  yum install -y cmake"
+            sudo yum install -y cmake; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "The cmake is installed."
         fi
     fi
 
@@ -278,6 +308,23 @@ function OSX_prepare()
         fi
     fi
 
+    if [[ $SRS_SRT == YES ]]; then
+        echo "SRT enable, install depend tools"
+        tclsh <<< "exit" >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing tcl."
+            echo "brew install tcl."
+            brew install tcl; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "install tcl success"
+        fi
+
+        cmake --help >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
+            echo "Installing cmake."
+            echo "brew install cmake."
+            brew install cmake; ret=$?; if [[ 0 -ne $ret ]]; then return $ret; fi
+            echo "install cmake success"
+        fi
+    fi
+
     echo "OSX install tools success"
     return 0
 }
@@ -329,35 +376,43 @@ function _srs_link_file()
 #       directly build on arm/mips, for example, pi or cubie,
 #       export srs-librtmp
 # others is invalid.
-if [[ $OS_IS_UBUNTU = NO && $OS_IS_CENTOS = NO && $OS_IS_OSX = NO ]]; then
-    if [[ $SRS_PI = NO && $SRS_CUBIE = NO && $SRS_CROSS_BUILD = NO ]]; then
-        echo "Your OS `uname -s` is not supported."
-        exit 1
-    fi
+if [[ $OS_IS_UBUNTU = NO && $OS_IS_CENTOS = NO && $OS_IS_OSX = NO && $SRS_CROSS_BUILD = NO ]]; then
+    echo "Your OS `uname -s` is not supported."
+    exit 1
 fi
 
 #####################################################################################
 # state-threads
 #####################################################################################
 # check the cross build flag file, if flag changed, need to rebuild the st.
-_ST_MAKE=linux-debug && _ST_EXTRA_CFLAGS="-O0" && _ST_LD=${SRS_TOOL_LD} && _ST_OBJ="LINUX_`uname -r`_DBG"
+_ST_MAKE=linux-debug && _ST_LD=${SRS_TOOL_LD} && _ST_OBJ="LINUX_`uname -r`_DBG"
+# Always alloc on heap, @see https://github.com/ossrs/srs/issues/509#issuecomment-719931676
+_ST_EXTRA_CFLAGS="-DMALLOC_STACK"
+# For valgrind to detect memory issues.
 if [[ $SRS_VALGRIND == YES ]]; then
     _ST_EXTRA_CFLAGS="$_ST_EXTRA_CFLAGS -DMD_VALGRIND"
 fi
 # for osx, use darwin for st, donot use epoll.
 if [[ $SRS_OSX == YES ]]; then
-    _ST_MAKE=darwin-debug && _ST_EXTRA_CFLAGS="-DMD_HAVE_KQUEUE" && _ST_LD=${SRS_TOOL_CC} && _ST_OBJ="DARWIN_`uname -r`_DBG"
+    _ST_MAKE=darwin-debug && _ST_LD=${SRS_TOOL_CC} && _ST_OBJ="DARWIN_`uname -r`_DBG"
 fi
 # Whether enable debug stats.
 if [[ $SRS_DEBUG_STATS == YES ]]; then
     _ST_EXTRA_CFLAGS="$_ST_EXTRA_CFLAGS -DDEBUG_STATS"
 fi
-# Always alloc on heap, @see https://github.com/ossrs/srs/issues/509#issuecomment-719931676
-_ST_EXTRA_CFLAGS="$_ST_EXTRA_CFLAGS -DMALLOC_STACK"
 # Pass the global extra flags.
 if [[ $SRS_EXTRA_FLAGS != '' ]]; then
     _ST_EXTRA_CFLAGS="$_ST_EXTRA_CFLAGS $SRS_EXTRA_FLAGS"
 fi
+# Whether link as .so
+if [[ $SRS_SHARED_ST == YES ]]; then
+  _ST_STATIC_ONLY=no;
+else
+  _ST_STATIC_ONLY=yes;
+fi
+# The final args to make st.
+_ST_MAKE_ARGS="${_ST_MAKE} STATIC_ONLY=${_ST_STATIC_ONLY}"
+_ST_MAKE_ARGS="${_ST_MAKE_ARGS} CC=${SRS_TOOL_CC} AR=${SRS_TOOL_AR} LD=${_ST_LD} RANDLIB=${SRS_TOOL_RANDLIB}"
 # Patched ST from https://github.com/ossrs/state-threads/tree/srs
 if [[ -f ${SRS_OBJS}/${SRS_PLATFORM}/st-srs/${_ST_OBJ}/libst.a ]]; then
     echo "The state-threads is ok.";
@@ -369,19 +424,8 @@ else
         cd ${SRS_OBJS}/${SRS_PLATFORM}/st-srs && ln -sf ../../../3rdparty/st-srs .src &&
         # Link source files under .src
         _srs_link_file .src/ ./ ./ &&
-        for dir in `(cd .src && find . -maxdepth 1 -type d|grep '\./')`; do
-            dir=`basename $dir` && mkdir -p $dir && _srs_link_file .src/$dir/ $dir/ ../
-        done &&
-        # Link source files under .src/xxx, the first child dir.
-        for dir in `(cd .src && find . -maxdepth 1 -type d|grep '\./'|grep -v Linux|grep -v Darwin)`; do
-            mkdir -p $dir &&
-            for file in `(cd .src/$dir && find . -maxdepth 1 -type f ! -name '*.o' ! -name '*.d')`; do
-                ln -sf ../.src/$dir/$file $dir/$file;
-            done;
-        done &&
         # Build source code.
-        make ${_ST_MAKE} EXTRA_CFLAGS="${_ST_EXTRA_CFLAGS}" \
-            CC=${SRS_TOOL_CC} AR=${SRS_TOOL_AR} LD=${_ST_LD} RANDLIB=${SRS_TOOL_RANDLIB} &&
+        env EXTRA_CFLAGS="${_ST_EXTRA_CFLAGS}" make ${_ST_MAKE_ARGS} &&
         cd .. && rm -rf st && ln -sf st-srs/${_ST_OBJ} st
     )
 fi
@@ -422,9 +466,7 @@ html_file=${SRS_OBJS}/nginx/html/forward/live/livestream_sd.html && hls_stream=l
 
 # copy players to nginx html dir.
 rm -rf ${SRS_OBJS}/nginx/html/players &&
-ln -sf `pwd`/research/players ${SRS_OBJS}/nginx/html/players &&
-rm -f ${SRS_OBJS}/nginx/crossdomain.xml &&
-ln -sf `pwd`/research/players/crossdomain.xml ${SRS_OBJS}/nginx/html/crossdomain.xml
+ln -sf `pwd`/research/players ${SRS_OBJS}/nginx/html/players
 
 # for favicon.ico
 rm -rf ${SRS_OBJS}/nginx/html/favicon.ico &&
@@ -433,6 +475,10 @@ ln -sf `pwd`/research/api-server/static-dir/favicon.ico ${SRS_OBJS}/nginx/html/f
 # For srs-console.
 rm -rf ${SRS_OBJS}/nginx/html/console &&
 ln -sf `pwd`/research/console ${SRS_OBJS}/nginx/html/console
+
+# For SRS signaling.
+rm -rf ${SRS_OBJS}/nginx/html/demos &&
+ln -sf `pwd`/3rdparty/signaling/www/demos ${SRS_OBJS}/nginx/html/demos
 
 # For home page index.html
 rm -rf ${SRS_OBJS}/nginx/html/index.html &&
@@ -596,6 +642,10 @@ if [ ! -f ${SRS_OBJS}/srtp2/lib/libsrtp2.a ]; then echo "Build libsrtp-2-fit sta
 # libopus, for WebRTC to transcode AAC with Opus.
 #####################################################################################
 if [[ $SRS_RTC == YES ]]; then
+    # Only build static libraries if no shared FFmpeg.
+    if [[ $SRS_SHARED_FFMPEG == NO ]]; then
+        OPUS_OPTIONS="--disable-shared"
+    fi
     if [[ -f ${SRS_OBJS}/${SRS_PLATFORM}/opus-1.3.1/_release/lib/libopus.a ]]; then
         echo "The opus-1.3.1 is ok.";
     else
@@ -603,7 +653,7 @@ if [[ $SRS_RTC == YES ]]; then
         (
             rm -rf ${SRS_OBJS}/${SRS_PLATFORM}/opus-1.3.1 && cd ${SRS_OBJS}/${SRS_PLATFORM} &&
             tar xf ../../3rdparty/opus-1.3.1.tar.gz && cd opus-1.3.1 &&
-            ./configure --prefix=`pwd`/_release --enable-static --disable-shared && make ${SRS_JOBS} && make install
+            ./configure --prefix=`pwd`/_release --enable-static $OPUS_OPTIONS && make ${SRS_JOBS} && make install
             cd .. && rm -rf opus && ln -sf opus-1.3.1/_release opus
         )
     fi
@@ -616,7 +666,7 @@ if [[ $SRS_RTC == YES ]]; then
 fi
 
 #####################################################################################
-# ffmpeg-fix, for WebRTC to transcode AAC with Opus.
+# ffmpeg-fit, for WebRTC to transcode AAC with Opus.
 #####################################################################################
 if [[ $SRS_FFMPEG_FIT == YES ]]; then
     FFMPEG_OPTIONS=""
@@ -628,6 +678,10 @@ if [[ $SRS_FFMPEG_FIT == YES ]]; then
     # If no nasm, we disable the x86asm.
     nasm -v >/dev/null 2>&1; ret=$?; if [[ 0 -ne $ret ]]; then
         FFMPEG_OPTIONS="--disable-x86asm"
+    fi
+    # Only build static libraries if no shared FFmpeg.
+    if [[ $SRS_SHARED_FFMPEG == YES ]]; then
+        FFMPEG_OPTIONS="$FFMPEG_OPTIONS --enable-shared"
     fi
 
     if [[ -f ${SRS_OBJS}/${SRS_PLATFORM}/ffmpeg-4-fit/_release/lib/libavcodec.a ]]; then
@@ -717,16 +771,39 @@ fi
 # SRT module, https://github.com/ossrs/srs/issues/1147#issuecomment-577469119
 #####################################################################################
 if [[ $SRS_SRT == YES ]]; then
-    if [[ -f /usr/local/lib64/libsrt.a && ! -f ${SRS_OBJS}/srt/lib/libsrt.a ]]; then
-        mkdir -p ${SRS_OBJS}/srt/lib && ln -sf /usr/local/lib64/libsrt.a ${SRS_OBJS}/srt/lib/libsrt.a
-        mkdir -p ${SRS_OBJS}/srt/include && ln -sf /usr/local/include/srt ${SRS_OBJS}/srt/include/
-    fi
-    if [[ -f ${SRS_OBJS}/srt/lib/libsrt.a ]]; then
-        echo "libsrt-1.4.1 is ok.";
+    if [[ -f ${SRS_OBJS}/${SRS_PLATFORM}/srt/lib/libsrt.a ]]; then
+        echo "libsrt-1-fit is ok.";
     else
-        echo "no libsrt, please run in docker ossrs/srs:srt or build from source https://github.com/ossrs/srs/issues/1147#issuecomment-577469119";
-        exit -1;
+        echo "Build srt-1-fit"
+        (
+            if [[ ! -d ${SRS_OBJS}/${SRS_PLATFORM}/openssl/lib/pkgconfig ]]; then
+                echo "OpenSSL pkgconfig no found, build srt-1-fit failed.";
+                exit -1;
+            fi
+            # Always disable c++11 for libsrt, because only the srt-app requres it.
+            LIBSRT_OPTIONS="--disable-app  --enable-static --enable-c++11=0"
+            if [[ $SRS_SHARED_SRT == YES ]]; then
+                LIBSRT_OPTIONS="$LIBSRT_OPTIONS --enable-shared=1"
+            else
+                LIBSRT_OPTIONS="$LIBSRT_OPTIONS --enable-shared=0"
+            fi
+            # Start build libsrt.
+            rm -rf ${SRS_OBJS}/${SRS_PLATFORM}/srt-1-fit && cd ${SRS_OBJS}/${SRS_PLATFORM} &&
+            cp -R ../../3rdparty/srt-1-fit srt-1-fit && cd srt-1-fit &&
+            PKG_CONFIG_PATH=../openssl/lib/pkgconfig ./configure --prefix=`pwd`/_release $LIBSRT_OPTIONS &&
+            make ${SRS_JOBS} && make install &&
+            cd .. && rm -rf srt && ln -sf srt-1-fit/_release srt &&
+            # If exists lib64 of libsrt, link it to lib
+            if [[ -d srt/lib64 ]]; then
+                cd srt && ln -sf lib64 lib
+            fi
+        )
+        ret=$?; if [[ $ret -ne 0 ]]; then echo "Build srt-1-fit failed, ret=$ret"; exit $ret; fi
     fi
+    # Always update the links.
+    (cd ${SRS_OBJS}/${SRS_PLATFORM} && rm -rf srt && ln -sf srt-1-fit/_release srt)
+    (cd ${SRS_OBJS} && rm -rf srt && ln -sf ${SRS_PLATFORM}/srt-1-fit/_release srt)
+    if [ ! -f ${SRS_OBJS}/srt/lib/libsrt.a ]; then echo "Build srt-1-fit failed."; exit -1; fi
 fi
 
 #####################################################################################

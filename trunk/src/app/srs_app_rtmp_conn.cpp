@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_app_rtmp_conn.hpp>
 
@@ -55,6 +38,7 @@ using namespace std;
 #include <srs_app_statistic.hpp>
 #include <srs_protocol_utility.hpp>
 #include <srs_protocol_json.hpp>
+#include <srs_app_rtc_source.hpp>
 
 // the timeout in srs_utime_t to wait encoder to republish
 // if timeout, close the connection.
@@ -525,7 +509,7 @@ srs_error_t SrsRtmpConn::stream_service_cycle()
     rtmp->set_send_timeout(SRS_CONSTS_RTMP_TIMEOUT);
     
     // find a source to serve.
-    SrsSource* source = NULL;
+    SrsLiveSource* source = NULL;
     if ((err = _srs_sources->fetch_or_create(req, server, &source)) != srs_success) {
         return srs_error_wrap(err, "rtmp: fetch source");
     }
@@ -533,7 +517,7 @@ srs_error_t SrsRtmpConn::stream_service_cycle()
     
     // update the statistic when source disconveried.
     SrsStatistic* stat = SrsStatistic::instance();
-    if ((err = stat->on_client(_srs_context->get_id(), req, this, info->type)) != srs_success) {
+    if ((err = stat->on_client(_srs_context->get_id().c_str(), req, this, info->type)) != srs_success) {
         return srs_error_wrap(err, "rtmp: stat client");
     }
     
@@ -620,7 +604,7 @@ srs_error_t SrsRtmpConn::check_vhost(bool try_default_vhost)
     return err;
 }
 
-srs_error_t SrsRtmpConn::playing(SrsSource* source)
+srs_error_t SrsRtmpConn::playing(SrsLiveSource* source)
 {
     srs_error_t err = srs_success;
     
@@ -676,8 +660,8 @@ srs_error_t SrsRtmpConn::playing(SrsSource* source)
     set_sock_options();
     
     // Create a consumer of source.
-    SrsConsumer* consumer = NULL;
-    SrsAutoFree(SrsConsumer, consumer);
+    SrsLiveConsumer* consumer = NULL;
+    SrsAutoFree(SrsLiveConsumer, consumer);
     if ((err = source->create_consumer(consumer)) != srs_success) {
         return srs_error_wrap(err, "rtmp: create consumer");
     }
@@ -708,7 +692,7 @@ srs_error_t SrsRtmpConn::playing(SrsSource* source)
     return err;
 }
 
-srs_error_t SrsRtmpConn::do_playing(SrsSource* source, SrsConsumer* consumer, SrsQueueRecvThread* rtrd)
+srs_error_t SrsRtmpConn::do_playing(SrsLiveSource* source, SrsLiveConsumer* consumer, SrsQueueRecvThread* rtrd)
 {
     srs_error_t err = srs_success;
     
@@ -835,7 +819,7 @@ srs_error_t SrsRtmpConn::do_playing(SrsSource* source, SrsConsumer* consumer, Sr
     return err;
 }
 
-srs_error_t SrsRtmpConn::publishing(SrsSource* source)
+srs_error_t SrsRtmpConn::publishing(SrsLiveSource* source)
 {
     srs_error_t err = srs_success;
     
@@ -874,7 +858,7 @@ srs_error_t SrsRtmpConn::publishing(SrsSource* source)
     return err;
 }
 
-srs_error_t SrsRtmpConn::do_publishing(SrsSource* source, SrsPublishRecvThread* rtrd)
+srs_error_t SrsRtmpConn::do_publishing(SrsLiveSource* source, SrsPublishRecvThread* rtrd)
 {
     srs_error_t err = srs_success;
     
@@ -954,31 +938,66 @@ srs_error_t SrsRtmpConn::do_publishing(SrsSource* source, SrsPublishRecvThread* 
     return err;
 }
 
-srs_error_t SrsRtmpConn::acquire_publish(SrsSource* source)
+srs_error_t SrsRtmpConn::acquire_publish(SrsLiveSource* source)
 {
     srs_error_t err = srs_success;
     
     SrsRequest* req = info->req;
-    
+	
+    // @see https://github.com/ossrs/srs/issues/2364
+    // Check whether GB28181 stream is busy.
+#if defined(SRS_GB28181)
+    if (_srs_gb28181 != NULL) {
+        SrsGb28181RtmpMuxer* gb28181 = _srs_gb28181->fetch_rtmpmuxer(req->stream);
+        if (gb28181 != NULL) {
+            return srs_error_new(ERROR_SYSTEM_STREAM_BUSY, "gb28181 stream %s busy", req->get_stream_url().c_str());
+        }
+    }
+#endif
+
+    // Check whether RTC stream is busy.
+#ifdef SRS_RTC
+    SrsRtcSource *rtc = NULL;
+    bool rtc_server_enabled = _srs_config->get_rtc_server_enabled();
+    bool rtc_enabled = _srs_config->get_rtc_enabled(req->vhost);
+    if (rtc_server_enabled && rtc_enabled && !info->edge) {
+        if ((err = _srs_rtc_sources->fetch_or_create(req, &rtc)) != srs_success) {
+            return srs_error_wrap(err, "create source");
+        }
+
+        if (!rtc->can_publish()) {
+            return srs_error_new(ERROR_RTC_SOURCE_BUSY, "rtc stream %s busy", req->get_stream_url().c_str());
+        }
+    }
+#endif
+
+    // Check whether RTMP stream is busy.
     if (!source->can_publish(info->edge)) {
         return srs_error_new(ERROR_SYSTEM_STREAM_BUSY, "rtmp: stream %s is busy", req->get_stream_url().c_str());
     }
-    
-    // when edge, ignore the publish event, directly proxy it.
-    if (info->edge) {
-        if ((err = source->on_edge_start_publish()) != srs_success) {
-            return srs_error_wrap(err, "rtmp: edge start publish");
+
+    // Bridge to RTC streaming.
+#if defined(SRS_RTC) && defined(SRS_FFMPEG_FIT)
+    if (rtc) {
+        SrsRtcFromRtmpBridger *bridger = new SrsRtcFromRtmpBridger(rtc);
+        if ((err = bridger->initialize(req)) != srs_success) {
+            srs_freep(bridger);
+            return srs_error_wrap(err, "bridger init");
         }
-    } else {
-        if ((err = source->on_publish()) != srs_success) {
-            return srs_error_wrap(err, "rtmp: source publish");
-        }
+
+        source->set_bridger(bridger);
     }
-    
-    return err;
+#endif
+
+    // Start publisher now.
+    if (info->edge) {
+        return source->on_edge_start_publish();
+    } else {
+        return source->on_publish();
+    }
 }
 
-void SrsRtmpConn::release_publish(SrsSource* source)
+void SrsRtmpConn::release_publish(SrsLiveSource* source)
 {
     // when edge, notice edge to change state.
     // when origin, notice all service to unpublish.
@@ -989,7 +1008,7 @@ void SrsRtmpConn::release_publish(SrsSource* source)
     }
 }
 
-srs_error_t SrsRtmpConn::handle_publish_message(SrsSource* source, SrsCommonMessage* msg)
+srs_error_t SrsRtmpConn::handle_publish_message(SrsLiveSource* source, SrsCommonMessage* msg)
 {
     srs_error_t err = srs_success;
     
@@ -1030,7 +1049,7 @@ srs_error_t SrsRtmpConn::handle_publish_message(SrsSource* source, SrsCommonMess
     return err;
 }
 
-srs_error_t SrsRtmpConn::process_publish_message(SrsSource* source, SrsCommonMessage* msg)
+srs_error_t SrsRtmpConn::process_publish_message(SrsLiveSource* source, SrsCommonMessage* msg)
 {
     srs_error_t err = srs_success;
     
@@ -1086,7 +1105,7 @@ srs_error_t SrsRtmpConn::process_publish_message(SrsSource* source, SrsCommonMes
     return err;
 }
 
-srs_error_t SrsRtmpConn::process_play_control_msg(SrsConsumer* consumer, SrsCommonMessage* msg)
+srs_error_t SrsRtmpConn::process_play_control_msg(SrsLiveConsumer* consumer, SrsCommonMessage* msg)
 {
     srs_error_t err = srs_success;
     

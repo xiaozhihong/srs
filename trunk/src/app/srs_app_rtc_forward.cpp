@@ -90,7 +90,7 @@ void SrsRtcForward::on_stop_publish(SrsRtcConnection* session, SrsRtcPublishStre
 {
 }
 
-srs_error_t SrsRtcForward::on_rtp_packet(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req, SrsRtpPacket2* pkt)
+srs_error_t SrsRtcForward::on_rtp_packet(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req, SrsRtpPacket* pkt)
 {
     // TODO: FIXME: send to the rtc forward receiver instead of using rtc consumer?
     srs_error_t err = srs_success;
@@ -101,7 +101,7 @@ srs_error_t SrsRtcForward::on_before_play(SrsRtcConnection* session, SrsRequest*
 {
     srs_error_t err = srs_success;
 
-	SrsRtcStream* rtc_source = NULL;
+	SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
@@ -143,12 +143,12 @@ srs_error_t SrsRtcForward::on_start_consume(SrsRtcConnection* session, SrsRtcPla
 {
     srs_error_t err = srs_success;
 
-	SrsRtcStream* rtc_source = NULL;
+	SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
 
-    SrsRtcStreamDescription* stream_desc = rtc_source->get_stream_desc();
+    SrsRtcSourceDescription* stream_desc = rtc_source->get_stream_desc();
     if (stream_desc == NULL) {
         return err;
     }

@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #ifndef SRS_APP_HOURGLASS_HPP
 #define SRS_APP_HOURGLASS_HPP
@@ -30,6 +13,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 class SrsCoroutine;
 
@@ -113,28 +97,31 @@ public:
     virtual ~ISrsFastTimer();
 public:
     // Tick when timer is active.
-    virtual srs_error_t on_timer(srs_utime_t interval, srs_utime_t tick) = 0;
+    virtual srs_error_t on_timer(srs_utime_t interval) = 0;
 };
 
 // The fast timer, shared by objects, for high performance.
 // For example, we should never start a timer for each connection or publisher or player,
 // instead, we should start only one fast timer in server.
-class SrsFastTimer : public ISrsHourGlass
+class SrsFastTimer : public ISrsCoroutineHandler
 {
 private:
-    SrsHourGlass* timer_;
-    std::map<int, ISrsFastTimer*> handlers_;
+    SrsCoroutine* trd_;
+    srs_utime_t interval_;
+    std::vector<ISrsFastTimer*> handlers_;
 public:
-    SrsFastTimer(std::string label, srs_utime_t resolution);
+    SrsFastTimer(std::string label, srs_utime_t interval);
     virtual ~SrsFastTimer();
 public:
     srs_error_t start();
 public:
-    void subscribe(srs_utime_t interval, ISrsFastTimer* timer);
+    void subscribe(ISrsFastTimer* timer);
     void unsubscribe(ISrsFastTimer* timer);
-// Interface ISrsHourGlass
+// Interface ISrsCoroutineHandler
 private:
-    virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
+    // Cycle the hourglass, which will sleep resolution every time.
+    // and call handler when ticked.
+    virtual srs_error_t cycle();
 };
 
 // To monitor the system wall clock timer deviation.
@@ -145,7 +132,7 @@ public:
     virtual ~SrsClockWallMonitor();
 // interface ISrsFastTimer
 private:
-    srs_error_t on_timer(srs_utime_t interval, srs_utime_t tick);
+    srs_error_t on_timer(srs_utime_t interval);
 };
 
 #endif

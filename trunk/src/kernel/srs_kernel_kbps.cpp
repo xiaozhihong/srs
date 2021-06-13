@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_kernel_kbps.hpp>
 
@@ -61,17 +44,12 @@ void srs_pps_update(SrsRateSample& sample, int64_t nn, srs_utime_t now)
 
 SrsPps::SrsPps()
 {
-    clk_ = NULL;
+    clk_ = _srs_clock;
     sugar = 0;
 }
 
 SrsPps::~SrsPps()
 {
-}
-
-void SrsPps::set_clock(SrsWallClock* clk)
-{
-    clk_ = clk;
 }
 
 void SrsPps::update()
@@ -81,10 +59,7 @@ void SrsPps::update()
 
 void SrsPps::update(int64_t nn)
 {
-    // Lazy setup the clock.
-    if (!clk_) {
-        clk_ = _srs_clock;
-    }
+    srs_assert(clk_);
 
     srs_utime_t now = clk_->now();
 
@@ -129,5 +104,5 @@ srs_utime_t SrsWallClock::now()
     return srs_get_system_time();
 }
 
-SrsWallClock* _srs_clock = new SrsWallClock();
+SrsWallClock* _srs_clock = NULL;
 

@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 John
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 John
+//
+// SPDX-License-Identifier: MIT
+//
 
 #ifndef SRS_APP_RTC_SERVER_HPP
 #define SRS_APP_RTC_SERVER_HPP
@@ -31,6 +14,7 @@
 #include <srs_app_reload.hpp>
 #include <srs_app_hourglass.hpp>
 #include <srs_app_hybrid.hpp>
+#include <srs_app_rtc_sdp.hpp>
 
 #include <string>
 
@@ -39,7 +23,7 @@ class SrsHourGlass;
 class SrsRtcConnection;
 class SrsRequest;
 class SrsSdp;
-class SrsRtcStream;
+class SrsRtcSource;
 class SrsResourceManager;
 
 // The UDP black hole, for developer to use wireshark to catch plaintext packets.
@@ -84,6 +68,25 @@ public:
     virtual srs_error_t on_udp_packet(SrsUdpMuxSocket* skt, SrsRtcConnection* session, bool* pconsumed) = 0;
 };
 
+// The user config for RTC publish or play.
+class SrsRtcUserConfig
+{
+public:
+    // Original variables from API.
+    SrsSdp remote_sdp_;
+    std::string eip_;
+    std::string codec_;
+
+    // Generated data.
+    SrsRequest* req_;
+    bool publish_;
+    bool dtls_;
+    bool srtp_;
+public:
+    SrsRtcUserConfig();
+    virtual ~SrsRtcUserConfig();
+};
+
 // The RTC server instance, listen UDP port, handle UDP packet, manage RTC connections.
 class SrsRtcServer : public ISrsUdpMuxHandler, public ISrsFastTimer, public ISrsReloadHandler
 {
@@ -111,21 +114,14 @@ public:
     srs_error_t listen_api();
 public:
     // Peer start offering, we answer it.
-    srs_error_t create_session(
-        SrsRequest* req, const SrsSdp& remote_sdp, SrsSdp& local_sdp, const std::string& mock_eip,
-        bool publish, bool dtls, bool srtp,
-        SrsRtcConnection** psession
-    );
+    srs_error_t create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection** psession);
 private:
-    srs_error_t do_create_session(
-        SrsRtcConnection* session, SrsRequest* req, const SrsSdp& remote_sdp, SrsSdp& local_sdp,
-        const std::string& mock_eip, bool publish, bool dtls, bool srtp
-    );
+    srs_error_t do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection* session);
 public:
     SrsRtcConnection* find_session_by_username(const std::string& ufrag);
 // interface ISrsFastTimer
 private:
-    srs_error_t on_timer(srs_utime_t interval, srs_utime_t tick);
+    srs_error_t on_timer(srs_utime_t interval);
 };
 
 // The RTC server adapter.

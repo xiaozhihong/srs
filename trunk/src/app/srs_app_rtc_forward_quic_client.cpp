@@ -104,7 +104,7 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
 {
     srs_error_t err = srs_success;
 
-	SrsRtcStream* rtc_source = NULL;
+	SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
@@ -158,7 +158,7 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
 
 srs_error_t SrsRtcForwardQuicClient::do_cycle(int64_t& rtc_forward_stream, 
                                               SrsQuicClient* quic_client, 
-                                              SrsRtcStream* rtc_source)
+                                              SrsRtcSource* rtc_source)
 {
     srs_error_t err = srs_success;
 
@@ -257,7 +257,7 @@ srs_error_t SrsRtcForwardQuicClient::connect_and_open_stream(SrsQuicClient* quic
     return err;
 }
 
-srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcStream* rtc_source)
+srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcSource* rtc_source)
 {
     srs_error_t err = srs_success;
 
@@ -319,7 +319,7 @@ srs_error_t SrsRtcForwardQuicClient::send_forward_req(SrsQuicClient* quic_client
     return err;
 }
 
-srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcStream* rtc_source)
+srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcSource* rtc_source)
 {
     srs_error_t err = srs_success;
 
@@ -356,8 +356,8 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
             return srs_error_wrap(err, "read body size %d failed", body_len);
         }
 
-        SrsRtpPacket2* pkt = _srs_rtp_cache->allocate();
-        pkt->reset();
+        SrsRtpPacket* pkt = new SrsRtpPacket();
+        SrsAutoFree(SrsRtpPacket, pkt);
 
     	char* p = pkt->wrap(rtp_data, body_len);
 
@@ -376,15 +376,12 @@ srs_error_t SrsRtcForwardQuicClient::recv_rtp_packet(SrsQuicClient* quic_client,
         }
 
 		if ((err = rtc_source->on_rtp(pkt)) != srs_success) {
-            _srs_rtp_cache->recycle(pkt);
             return srs_error_wrap(err, "process rtp packet failed");
         }
 
         if (rtc_source->can_stop_forward(30 * SRS_UTIME_SECONDS)) {
             return srs_error_new(ERROR_RTC_NO_NEED_FORWARD, "no consumer, stop forward");
         }
-
-        _srs_rtp_cache->recycle(pkt);
     }
     return err;
 }

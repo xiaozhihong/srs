@@ -324,7 +324,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject
     }
     req_->app = prop->to_str();
 
-	SrsRtcStream* rtc_source = NULL;
+	SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
@@ -393,12 +393,12 @@ srs_error_t SrsRtcForwardQuicStreamThread::do_request_keyframe()
 {
     srs_error_t err = srs_success;
 
-    SrsRtcStream* rtc_source = NULL;
+    SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
 
-    SrsRtcStreamDescription* stream_desc = rtc_source->get_stream_desc();
+    SrsRtcSourceDescription* stream_desc = rtc_source->get_stream_desc();
     if (stream_desc == NULL) {
         return err;
     }
@@ -426,7 +426,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         return srs_error_wrap(err, "request key frame failed");
     }
 
-    SrsRtcStream* rtc_source = NULL;
+    SrsRtcSource* rtc_source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req_, &rtc_source)) != srs_success) {
         return srs_error_wrap(err, "create rtc_source");
     }
@@ -449,7 +449,9 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
             return srs_error_wrap(err, "rtc forward quic conn thread failed");
         }
 
-        SrsRtpPacket2* pkt = NULL;
+        SrsRtpPacket* pkt = NULL;
+        SrsAutoFree(SrsRtpPacket, pkt);
+
         consumer->dump_packet(&pkt);
 
         if (!pkt) {
@@ -478,8 +480,6 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
             return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
         }
-
-        _srs_rtp_cache->recycle(pkt);
     }
 
     return err;

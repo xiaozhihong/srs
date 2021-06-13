@@ -50,7 +50,7 @@
 #include <sys/socket.h>
 
 class SrsQuicClient;
-class SrsRtcStream;
+class SrsRtcSource;
 
 // TODO: FIXME: rename it.
 // Pull rtc stream from remote, and publish rtc stream in local.
@@ -65,12 +65,12 @@ public:
     virtual void request_keyframe(uint32_t);
     virtual srs_error_t cycle();
 private:
-    srs_error_t do_cycle(int64_t& rtc_forward_stream, SrsQuicClient* quic_client, SrsRtcStream* rtc_source);
+    srs_error_t do_cycle(int64_t& rtc_forward_stream, SrsQuicClient* quic_client, SrsRtcSource* rtc_source);
     srs_error_t read_header(SrsQuicClient* quic_client, int64_t stream_id, uint16_t& body_len, srs_utime_t timeout);
     srs_error_t read_body(SrsQuicClient* quic_client, int64_t stream_id, void* buf, int size, srs_utime_t timeout);
     srs_error_t connect_and_open_stream(SrsQuicClient* quic_client, int64_t& rtc_forward_stream);
-    srs_error_t send_forward_req(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcStream* rtc_source);
-    srs_error_t recv_rtp_packet(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcStream* rtc_source);
+    srs_error_t send_forward_req(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcSource* rtc_source);
+    srs_error_t recv_rtp_packet(SrsQuicClient* quic_client, int64_t rtc_forward_stream, SrsRtcSource* rtc_source);
 private:
     SrsRequest* req_;
     SrsSTCoroutine* trd_;

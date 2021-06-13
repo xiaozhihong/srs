@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_app_listener.hpp>
 
@@ -45,11 +28,11 @@ using namespace std;
 
 #include <srs_protocol_kbps.hpp>
 
-SrsPps* _srs_pps_rpkts = new SrsPps();
-SrsPps* _srs_pps_addrs = new SrsPps();
-SrsPps* _srs_pps_fast_addrs = new SrsPps();
+SrsPps* _srs_pps_rpkts = NULL;
+SrsPps* _srs_pps_addrs = NULL;
+SrsPps* _srs_pps_fast_addrs = NULL;
 
-SrsPps* _srs_pps_spkts = new SrsPps();
+SrsPps* _srs_pps_spkts = NULL;
 
 // set the max packet size.
 #define SRS_UDP_MAX_PACKET_SIZE 65535
@@ -529,6 +512,10 @@ srs_error_t SrsUdpMuxListener::listen()
     
     srs_freep(trd);
     trd = new SrsSTCoroutine("udp", this, cid);
+
+    //change stack size to 256K, fix crash when call some 3rd-part api.
+    ((SrsSTCoroutine*)trd)->set_stack_size(1 << 18);
+
     if ((err = trd->start()) != srs_success) {
         return srs_error_wrap(err, "start thread");
     }

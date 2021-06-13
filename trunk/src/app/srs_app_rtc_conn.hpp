@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 John
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 John
+//
+// SPDX-License-Identifier: MIT
+//
 
 #ifndef SRS_APP_RTC_CONN_HPP
 #define SRS_APP_RTC_CONN_HPP
@@ -47,13 +30,13 @@
 #include <sys/socket.h>
 
 class SrsUdpMuxSocket;
-class SrsConsumer;
+class SrsLiveConsumer;
 class SrsStunPacket;
 class SrsRtcServer;
 class SrsRtcConnection;
 class SrsSharedPtrMessage;
-class SrsRtcStream;
-class SrsRtpPacket2;
+class SrsRtcSource;
+class SrsRtpPacket;
 class ISrsCodec;
 class SrsRtpNackForReceiver;
 class SrsRtpIncommingVideoFrame;
@@ -64,6 +47,9 @@ class SrsRtcVideoSendTrack;
 class SrsErrorPithyPrint;
 class SrsPithyPrint;
 class SrsStatistic;
+class SrsRtcUserConfig;
+class SrsRtcSendTrack;
+class SrsRtcPublishStream;
 
 const uint8_t kSR   = 200;
 const uint8_t kRR   = 201;
@@ -189,7 +175,7 @@ public:
 };
 
 // A worker coroutine to request the PLI.
-class SrsRtcPLIWorker : virtual public ISrsCoroutineHandler
+class SrsRtcPLIWorker : public ISrsCoroutineHandler
 {
 private:
     SrsCoroutine* trd_;
@@ -210,8 +196,8 @@ public:
 };
 
 // A RTC play stream, client pull and play stream from SRS.
-class SrsRtcPlayStream : virtual public ISrsCoroutineHandler, virtual public ISrsReloadHandler
-    , virtual public ISrsHourGlass, virtual public ISrsRtcPLIWorkerHandler, public ISrsRtcStreamChangeCallback
+class SrsRtcPlayStream : public ISrsCoroutineHandler, public ISrsReloadHandler
+    , public ISrsRtcPLIWorkerHandler, public ISrsRtcSourceChangeCallback
 {
 private:
     SrsContextId cid_;
@@ -220,13 +206,20 @@ private:
     SrsRtcPLIWorker* pli_worker_;
 private:
     SrsRequest* req_;
-    SrsRtcStream* source_;
-    SrsHourGlass* timer_;
+    SrsRtcSource* source_;
     // key: publish_ssrc, value: send track to process rtp/rtcp
     std::map<uint32_t, SrsRtcAudioSendTrack*> audio_tracks_;
     std::map<uint32_t, SrsRtcVideoSendTrack*> video_tracks_;
     // The pithy print for special stage.
     SrsErrorPithyPrint* nack_epp;
+private:
+    // Fast cache for tracks.
+    uint32_t cache_ssrc0_;
+    uint32_t cache_ssrc1_;
+    uint32_t cache_ssrc2_;
+    SrsRtcSendTrack* cache_track0_;
+    SrsRtcSendTrack* cache_track1_;
+    SrsRtcSendTrack* cache_track2_;
 private:
     // For merged-write messages.
     int mw_msgs;
@@ -242,9 +235,9 @@ public:
     virtual ~SrsRtcPlayStream();
 public:
     srs_error_t initialize(SrsRequest* request, std::map<uint32_t, SrsRtcTrackDescription*> sub_relations);
-// Interface ISrsRtcStreamChangeCallback
+// Interface ISrsRtcSourceChangeCallback
 public:
-    void on_stream_change(SrsRtcStreamDescription* desc);
+    void on_stream_change(SrsRtcSourceDescription* desc);
 // interface ISrsReloadHandler
 public:
     virtual srs_error_t on_reload_vhost_play(std::string vhost);
@@ -256,13 +249,10 @@ public:
 public:
     virtual srs_error_t cycle();
 private:
-    srs_error_t send_packet(SrsRtpPacket2*& pkt);
+    srs_error_t send_packet(SrsRtpPacket*& pkt);
 public:
     // Directly set the status of track, generally for init to set the default value.
     void set_all_tracks_status(bool status);
-// interface ISrsHourGlass
-public:
-    virtual srs_error_t notify(int type, srs_utime_t interval, srs_utime_t tick);
 public:
     srs_error_t on_rtcp(SrsRtcpCommon* rtcp);
 private:
@@ -276,13 +266,43 @@ public:
     virtual srs_error_t do_request_keyframe(uint32_t ssrc, SrsContextId cid);
 };
 
-// A RTC publish stream, client push and publish stream to SRS.
-class SrsRtcPublishStream : virtual public ISrsHourGlass, virtual public ISrsRtpPacketDecodeHandler
-    , virtual public ISrsRtcPublishStream, virtual public ISrsRtcPLIWorkerHandler
+// A fast timer for publish stream, for RTCP feedback.
+class SrsRtcPublishRtcpTimer : public ISrsFastTimer
 {
 private:
+    SrsRtcPublishStream* p_;
+public:
+    SrsRtcPublishRtcpTimer(SrsRtcPublishStream* p);
+    virtual ~SrsRtcPublishRtcpTimer();
+// interface ISrsFastTimer
+private:
+    srs_error_t on_timer(srs_utime_t interval);
+};
+
+// A fast timer for publish stream, for TWCC feedback.
+class SrsRtcPublishTwccTimer : public ISrsFastTimer
+{
+private:
+    SrsRtcPublishStream* p_;
+public:
+    SrsRtcPublishTwccTimer(SrsRtcPublishStream* p);
+    virtual ~SrsRtcPublishTwccTimer();
+// interface ISrsFastTimer
+private:
+    srs_error_t on_timer(srs_utime_t interval);
+};
+
+// A RTC publish stream, client push and publish stream to SRS.
+class SrsRtcPublishStream : public ISrsRtspPacketDecodeHandler
+    , public ISrsRtcPublishStream, public ISrsRtcPLIWorkerHandler
+{
+private:
+    friend class SrsRtcPublishRtcpTimer;
+    friend class SrsRtcPublishTwccTimer;
+    SrsRtcPublishRtcpTimer* timer_rtcp_;
+    SrsRtcPublishTwccTimer* timer_twcc_;
+private:
     SrsContextId cid_;
-    SrsHourGlass* timer_;
     uint64_t nn_audio_frames;
     SrsRtcPLIWorker* pli_worker_;
     SrsErrorPithyPrint* twcc_epp_;
@@ -299,7 +319,7 @@ private:
     uint8_t fir_seq_;
 private:
     SrsRequest* req;
-    SrsRtcStream* source;
+    SrsRtcSource* source;
     // Simulators.
     int nn_simulate_nack_drop;
 private:
@@ -317,7 +337,7 @@ public:
     SrsRtcPublishStream(SrsRtcConnection* session, const SrsContextId& cid);
     virtual ~SrsRtcPublishStream();
 public:
-    srs_error_t initialize(SrsRequest* req, SrsRtcStreamDescription* stream_desc);
+    srs_error_t initialize(SrsRequest* req, SrsRtcSourceDescription* stream_desc);
     srs_error_t start();
     // Directly set the status of track, generally for init to set the default value.
     void set_all_tracks_status(bool status);
@@ -331,11 +351,11 @@ private:
     // @remark We copy the plaintext, user should free it.
     srs_error_t on_rtp_plaintext(char* plaintext, int nb_plaintext);
 private:
-    srs_error_t do_on_rtp_plaintext(SrsRtpPacket2*& pkt, SrsBuffer* buf);
+    srs_error_t do_on_rtp_plaintext(SrsRtpPacket*& pkt, SrsBuffer* buf);
 public:
     srs_error_t check_send_nacks();
 public:
-    virtual void on_before_decode_payload(SrsRtpPacket2* pkt, SrsBuffer* buf, ISrsRtpPayloader** ppayload, SrsRtpPacketPayloadType* ppt);
+    virtual void on_before_decode_payload(SrsRtpPacket* pkt, SrsBuffer* buf, ISrsRtpPayloader** ppayload, SrsRtspPacketPayloadType* ppt);
 private:
     srs_error_t send_periodic_twcc();
 public:
@@ -346,9 +366,6 @@ private:
 public:
     void request_keyframe(uint32_t ssrc);
     virtual srs_error_t do_request_keyframe(uint32_t ssrc, SrsContextId cid);
-// interface ISrsHourGlass
-public:
-    virtual srs_error_t notify(int type, srs_utime_t interval, srs_utime_t tick);
 public:
     void simulate_nack_drop(int nn);
 private:
@@ -361,24 +378,6 @@ private:
     void update_send_report_time(uint32_t ssrc, const SrsNtp& ntp);
 };
 
-// The statistics for RTC connection.
-class SrsRtcConnectionStatistic
-{
-public:
-    int nn_publishers; int nn_subscribers;
-    int nn_rr; int nn_xr; int nn_sr; int nn_nack; int nn_pli;
-    uint64_t nn_in_twcc; uint64_t nn_in_rtp; uint64_t nn_in_audios; uint64_t nn_in_videos;
-    uint64_t nn_out_twcc; uint64_t nn_out_rtp; uint64_t nn_out_audios; uint64_t nn_out_videos;
-private:
-    srs_utime_t born;
-    srs_utime_t dead;
-public:
-    SrsRtcConnectionStatistic();
-    virtual ~SrsRtcConnectionStatistic();
-public:
-    std::string summary();
-};
-
 // Callback for RTC connection.
 class ISrsRtcConnectionHijacker
 {
@@ -389,25 +388,38 @@ public:
     virtual srs_error_t on_dtls_done() = 0;
 };
 
+// A fast timer for conntion, for NACK feedback.
+class SrsRtcConnectionNackTimer : public ISrsFastTimer
+{
+private:
+    SrsRtcConnection* p_;
+public:
+    SrsRtcConnectionNackTimer(SrsRtcConnection* p);
+    virtual ~SrsRtcConnectionNackTimer();
+// interface ISrsFastTimer
+private:
+    srs_error_t on_timer(srs_utime_t interval);
+};
+
 // A RTC Peer Connection, SDP level object.
 //
-// For performance, we use non-virtual public from resource,
+// For performance, we use non-public from resource,
 // see https://stackoverflow.com/questions/3747066/c-cannot-convert-from-base-a-to-derived-type-b-via-virtual-base-a
-class SrsRtcConnection : public ISrsResource
-    , virtual public ISrsHourGlass, virtual public ISrsDisposingHandler
+class SrsRtcConnection : public ISrsResource, public ISrsDisposingHandler
 {
     friend class SrsSecurityTransport;
     friend class SrsRtcPlayStream;
     friend class SrsRtcPublishStream;
+private:
+    friend class SrsRtcConnectionNackTimer;
+    SrsRtcConnectionNackTimer* timer_nack_;
 public:
     bool disposing_;
-    SrsRtcConnectionStatistic* stat_;
     ISrsRtcConnectionHijacker* hijacker_;
 private:
     SrsRtcServer* server_;
     SrsRtcConnectionStateType state_;
     ISrsRtcTransport* transport_;
-    SrsHourGlass* timer_;
 private:
     iovec* cache_iov_;
     SrsBuffer* cache_buffer_;
@@ -449,6 +461,8 @@ private:
     SrsErrorPithyPrint* pp_address_change;
     // Pithy print for PLI request.
     SrsErrorPithyPrint* pli_epp;
+private:
+    bool nack_enabled_;
 public:
     SrsRtcConnection(SrsRtcServer* s, const SrsContextId& cid);
     virtual ~SrsRtcConnection();
@@ -477,8 +491,8 @@ public:
     void switch_to_context();
     const SrsContextId& context_id();
 public:
-    srs_error_t add_publisher(SrsRequest* request, const SrsSdp& remote_sdp, SrsSdp& local_sdp);
-    srs_error_t add_player(SrsRequest* request, const SrsSdp& remote_sdp, SrsSdp& local_sdp);
+    srs_error_t add_publisher(SrsRtcUserConfig* ruc, SrsSdp& local_sdp);
+    srs_error_t add_player(SrsRtcUserConfig* ruc, SrsSdp& local_sdp);
 public:
     // Before initialize, user must set the local SDP, which is used to inititlize DTLS.
     srs_error_t initialize(SrsRequest* r, bool dtls, bool srtp, std::string username);
@@ -506,9 +520,6 @@ public:
     bool is_alive();
     void alive();
     void update_sendonly_socket(SrsUdpMuxSocket* skt);
-// interface ISrsHourGlass
-public:
-    virtual srs_error_t notify(int type, srs_utime_t interval, srs_utime_t tick);
 public:
     // send rtcp
     srs_error_t send_rtcp(char *data, int nb_data);
@@ -521,22 +532,21 @@ public:
     // Simulate the NACK to drop nn packets.
     void simulate_nack_drop(int nn);
     void simulate_player_drop_packet(SrsRtpHeader* h, int nn_bytes);
-    srs_error_t do_send_packet(SrsRtpPacket2* pkt);
+    srs_error_t do_send_packet(SrsRtpPacket* pkt);
     // Directly set the status of play track, generally for init to set the default value.
     void set_all_tracks_status(std::string stream_uri, bool is_publish, bool status);
 private:
     srs_error_t on_binding_request(SrsStunPacket* r);
     // publish media capabilitiy negotiate
-    srs_error_t negotiate_publish_capability(SrsRequest* req, const SrsSdp& remote_sdp, SrsRtcStreamDescription* stream_desc);
-    srs_error_t generate_publish_local_sdp(SrsRequest* req, SrsSdp& local_sdp, SrsRtcStreamDescription* stream_desc, bool unified_plan);
+    srs_error_t negotiate_publish_capability(SrsRtcUserConfig* ruc, SrsRtcSourceDescription* stream_desc);
+    srs_error_t generate_publish_local_sdp(SrsRequest* req, SrsSdp& local_sdp, SrsRtcSourceDescription* stream_desc, bool unified_plan);
     // play media capabilitiy negotiate
     //TODO: Use StreamDescription to negotiate and remove first negotiate_play_capability function
-    srs_error_t negotiate_play_capability(SrsRequest* req, const SrsSdp& remote_sdp, std::map<uint32_t, SrsRtcTrackDescription*>& sub_relations);
-    srs_error_t negotiate_play_capability(SrsRequest* req, SrsRtcStreamDescription* req_stream_desc, std::map<uint32_t, SrsRtcTrackDescription*>& sub_relations);
+    srs_error_t negotiate_play_capability(SrsRtcUserConfig* ruc, std::map<uint32_t, SrsRtcTrackDescription*>& sub_relations);
     srs_error_t fetch_source_capability(SrsRequest* req, std::map<uint32_t, SrsRtcTrackDescription*>& sub_relations);
-    srs_error_t generate_play_local_sdp(SrsRequest* req, SrsSdp& local_sdp, SrsRtcStreamDescription* stream_desc, bool unified_plan);
+    srs_error_t generate_play_local_sdp(SrsRequest* req, SrsSdp& local_sdp, SrsRtcSourceDescription* stream_desc, bool unified_plan);
     srs_error_t create_player(SrsRequest* request, std::map<uint32_t, SrsRtcTrackDescription*> sub_relations);
-    srs_error_t create_publisher(SrsRequest* request, SrsRtcStreamDescription* stream_desc);
+    srs_error_t create_publisher(SrsRequest* request, SrsRtcSourceDescription* stream_desc);
 };
 
 class ISrsRtcHijacker
@@ -554,7 +564,7 @@ public:
     // When stop publish by RTC.
     virtual void on_stop_publish(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req) = 0;
     // When got RTP plaintext packet.
-    virtual srs_error_t on_rtp_packet(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req, SrsRtpPacket2* pkt) = 0;
+    virtual srs_error_t on_rtp_packet(SrsRtcConnection* session, SrsRtcPublishStream* publisher, SrsRequest* req, SrsRtpPacket* pkt) = 0;
     // When before play by RTC. (wait source to ready in cascade scenario)
     virtual srs_error_t on_before_play(SrsRtcConnection* session, SrsRequest* req) = 0;
     // When start player by RTC.

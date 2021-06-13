@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 John
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 John
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_app_rtc_server.hpp>
 
@@ -46,9 +29,9 @@ using namespace std;
 #include <srs_protocol_utility.hpp>
 
 extern SrsPps* _srs_pps_rpkts;
-SrsPps* _srs_pps_rstuns = new SrsPps();
-SrsPps* _srs_pps_rrtps = new SrsPps();
-SrsPps* _srs_pps_rrtcps = new SrsPps();
+SrsPps* _srs_pps_rstuns = NULL;
+SrsPps* _srs_pps_rrtps = NULL;
+SrsPps* _srs_pps_rrtcps = NULL;
 extern SrsPps* _srs_pps_addrs;
 extern SrsPps* _srs_pps_fast_addrs;
 
@@ -132,10 +115,10 @@ void SrsRtcBlackhole::sendto(void* data, int len)
     srs_sendto(blackhole_stfd, data, len, (sockaddr*)blackhole_addr, sizeof(sockaddr_in), SRS_UTIME_NO_TIMEOUT);
 }
 
-SrsRtcBlackhole* _srs_blackhole = new SrsRtcBlackhole();
+SrsRtcBlackhole* _srs_blackhole = NULL;
 
 // @global dtls certficate for rtc module.
-SrsDtlsCertificate* _srs_rtc_dtls_certificate = new SrsDtlsCertificate();
+SrsDtlsCertificate* _srs_rtc_dtls_certificate = NULL;
 
 // TODO: Should support error response.
 // For STUN packet, 0x00 is binding request, 0x01 is binding success response.
@@ -243,6 +226,18 @@ ISrsRtcServerHijacker::~ISrsRtcServerHijacker()
 {
 }
 
+SrsRtcUserConfig::SrsRtcUserConfig()
+{
+    req_ = new SrsRequest();
+    publish_ = false;
+    dtls_ = srtp_ = true;
+}
+
+SrsRtcUserConfig::~SrsRtcUserConfig()
+{
+    srs_freep(req_);
+}
+
 SrsRtcServer::SrsRtcServer()
 {
     handler = NULL;
@@ -269,68 +264,19 @@ srs_error_t SrsRtcServer::initialize()
     srs_error_t err = srs_success;
 
     // The RTC server start a timer, do routines of RTC server.
-    _srs_hybrid->timer()->subscribe(5 * SRS_UTIME_SECONDS, this);
+    // @see SrsRtcServer::on_timer()
+    _srs_hybrid->timer5s()->subscribe(this);
 
     // Initialize the black hole.
     if ((err = _srs_blackhole->initialize()) != srs_success) {
         return srs_error_wrap(err, "black hole");
     }
 
-    bool rtp_cache_enabled = _srs_config->get_rtc_server_rtp_cache_enabled();
-    uint64_t rtp_cache_pkt_size = _srs_config->get_rtc_server_rtp_cache_pkt_size();
-    uint64_t rtp_cache_payload_size = _srs_config->get_rtc_server_rtp_cache_payload_size();
-    _srs_rtp_cache->setup(rtp_cache_enabled, rtp_cache_pkt_size);
-    _srs_rtp_raw_cache->setup(rtp_cache_enabled, rtp_cache_payload_size);
-    _srs_rtp_fua_cache->setup(rtp_cache_enabled, rtp_cache_payload_size);
-
-    bool rtp_msg_cache_enabled = _srs_config->get_rtc_server_rtp_msg_cache_enabled();
-    uint64_t rtp_msg_cache_msg_size = _srs_config->get_rtc_server_rtp_msg_cache_msg_size();
-    uint64_t rtp_msg_cache_buffer_size = _srs_config->get_rtc_server_rtp_msg_cache_buffer_size();
-    _srs_rtp_msg_cache_buffers->setup(rtp_msg_cache_enabled, rtp_msg_cache_buffer_size);
-    _srs_rtp_msg_cache_objs->setup(rtp_msg_cache_enabled, rtp_msg_cache_msg_size);
-
-    srs_trace("RTC: Object cache init, rtp-cache=(enabled:%d,pkt:%dm-%dw,payload:%dm-%dw-%dw), msg-cache=(enabled:%d,obj:%dm-%dw,buf:%dm-%dw)",
-        rtp_cache_enabled, (int)(rtp_cache_pkt_size/1024/1024), _srs_rtp_cache->capacity()/10000,
-        (int)(rtp_cache_payload_size/1024/1024), _srs_rtp_raw_cache->capacity()/10000, _srs_rtp_fua_cache->capacity()/10000,
-        rtp_msg_cache_enabled, (int)(rtp_msg_cache_msg_size/1024/1024), _srs_rtp_msg_cache_objs->capacity()/10000,
-        (int)(rtp_msg_cache_buffer_size/1024/1024), _srs_rtp_msg_cache_buffers->capacity()/10000);
-
     return err;
 }
 
 srs_error_t SrsRtcServer::on_reload_rtc_server()
 {
-    bool changed = false;
-
-    bool rtp_cache_enabled = _srs_config->get_rtc_server_rtp_cache_enabled();
-    uint64_t rtp_cache_pkt_size = _srs_config->get_rtc_server_rtp_cache_pkt_size();
-    uint64_t rtp_cache_payload_size = _srs_config->get_rtc_server_rtp_cache_payload_size();
-    if (_srs_rtp_cache->enabled() != rtp_cache_enabled) {
-        _srs_rtp_cache->setup(rtp_cache_enabled, rtp_cache_pkt_size);
-        _srs_rtp_raw_cache->setup(rtp_cache_enabled, rtp_cache_payload_size);
-        _srs_rtp_fua_cache->setup(rtp_cache_enabled, rtp_cache_payload_size);
-
-        changed = true;
-    }
-
-    bool rtp_msg_cache_enabled = _srs_config->get_rtc_server_rtp_msg_cache_enabled();
-    uint64_t rtp_msg_cache_msg_size = _srs_config->get_rtc_server_rtp_msg_cache_msg_size();
-    uint64_t rtp_msg_cache_buffer_size = _srs_config->get_rtc_server_rtp_msg_cache_buffer_size();
-    if (_srs_rtp_msg_cache_buffers->enabled() != rtp_msg_cache_enabled) {
-        _srs_rtp_msg_cache_buffers->setup(rtp_msg_cache_enabled, rtp_msg_cache_buffer_size);
-        _srs_rtp_msg_cache_objs->setup(rtp_msg_cache_enabled, rtp_msg_cache_msg_size);
-
-        changed = true;
-    }
-
-    if (changed) {
-        srs_trace("RTC: Object cache reload, rtp-cache=(enabled:%d,pkt:%dm-%dw,payload:%dm-%dw-%dw), msg-cache=(enabled:%d,obj:%dm-%dw,buf:%dm-%dw)",
-            rtp_cache_enabled, (int)(rtp_cache_pkt_size/1024/1024), _srs_rtp_cache->capacity()/10000,
-            (int)(rtp_cache_payload_size/1024/1024), _srs_rtp_raw_cache->capacity()/10000, _srs_rtp_fua_cache->capacity()/10000,
-            rtp_msg_cache_enabled, (int)(rtp_msg_cache_msg_size/1024/1024), _srs_rtp_msg_cache_objs->capacity()/10000,
-            (int)(rtp_msg_cache_buffer_size/1024/1024), _srs_rtp_msg_cache_buffers->capacity()/10000);
-    }
-
     return srs_success;
 }
 
@@ -498,27 +444,26 @@ srs_error_t SrsRtcServer::listen_api()
     return err;
 }
 
-srs_error_t SrsRtcServer::create_session(
-    SrsRequest* req, const SrsSdp& remote_sdp, SrsSdp& local_sdp, const std::string& mock_eip,
-    bool publish, bool dtls, bool srtp,
-    SrsRtcConnection** psession
-) {
+srs_error_t SrsRtcServer::create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection** psession)
+{
     srs_error_t err = srs_success;
 
     SrsContextId cid = _srs_context->get_id();
 
-    SrsRtcStream* source = NULL;
+    SrsRequest* req = ruc->req_;
+
+    SrsRtcSource* source = NULL;
     if ((err = _srs_rtc_sources->fetch_or_create(req, &source)) != srs_success) {
         return srs_error_wrap(err, "create source");
     }
 
-    if (publish && !source->can_publish()) {
+    if (ruc->publish_ && !source->can_publish()) {
         return srs_error_new(ERROR_RTC_SOURCE_BUSY, "stream %s busy", req->get_stream_url().c_str());
     }
 
     // TODO: FIXME: add do_create_session to error process.
     SrsRtcConnection* session = new SrsRtcConnection(this, cid);
-    if ((err = do_create_session(session, req, remote_sdp, local_sdp, mock_eip, publish, dtls, srtp)) != srs_success) {
+    if ((err = do_create_session(ruc, local_sdp, session)) != srs_success) {
         srs_freep(session);
         return srs_error_wrap(err, "create session");
     }
@@ -528,26 +473,25 @@ srs_error_t SrsRtcServer::create_session(
     return err;
 }
 
-srs_error_t SrsRtcServer::do_create_session(
-    SrsRtcConnection* session, SrsRequest* req, const SrsSdp& remote_sdp, SrsSdp& local_sdp, const std::string& mock_eip,
-    bool publish, bool dtls, bool srtp
-)
+srs_error_t SrsRtcServer::do_create_session(SrsRtcUserConfig* ruc, SrsSdp& local_sdp, SrsRtcConnection* session)
 {
     srs_error_t err = srs_success;
 
+    SrsRequest* req = ruc->req_;
+
     // first add publisher/player for negotiate sdp media info
-    if (publish) {
-        if ((err = session->add_publisher(req, remote_sdp, local_sdp)) != srs_success) {
+    if (ruc->publish_) {
+        if ((err = session->add_publisher(ruc, local_sdp)) != srs_success) {
             return srs_error_wrap(err, "add publisher");
         }
     } else {
-        if ((err = session->add_player(req, remote_sdp, local_sdp)) != srs_success) {
+        if ((err = session->add_player(ruc, local_sdp)) != srs_success) {
             return srs_error_wrap(err, "add player");
         }
     }
 
     // All tracks default as inactive, so we must enable them.
-    session->set_all_tracks_status(req->get_stream_url(), publish, true);
+    session->set_all_tracks_status(req->get_stream_url(), ruc->publish_, true);
 
     std::string local_pwd = srs_random_str(32);
     std::string local_ufrag = "";
@@ -556,7 +500,7 @@ srs_error_t SrsRtcServer::do_create_session(
     while (true) {
         local_ufrag = srs_random_str(8);
 
-        username = local_ufrag + ":" + remote_sdp.get_ice_ufrag();
+        username = local_ufrag + ":" + ruc->remote_sdp_.get_ice_ufrag();
         if (!_srs_rtc_manager->find_by_name(username)) {
             break;
         }
@@ -568,13 +512,13 @@ srs_error_t SrsRtcServer::do_create_session(
     local_sdp.set_fingerprint(_srs_rtc_dtls_certificate->get_fingerprint());
 
     // We allows to mock the eip of server.
-    if (!mock_eip.empty()) {
+    if (!ruc->eip_.empty()) {
         string host;
         int port = _srs_config->get_rtc_server_listen();
-        srs_parse_hostport(mock_eip, host, port);
+        srs_parse_hostport(ruc->eip_, host, port);
 
         local_sdp.add_candidate(host, port, "host");
-        srs_trace("RTC: Use candidate mock_eip %s as %s:%d", mock_eip.c_str(), host.c_str(), port);
+        srs_trace("RTC: Use candidate mock_eip %s as %s:%d", ruc->eip_.c_str(), host.c_str(), port);
     } else {
         std::vector<string> candidate_ips = get_candidate_ips();
         for (int i = 0; i < (int)candidate_ips.size(); ++i) {
@@ -587,11 +531,11 @@ srs_error_t SrsRtcServer::do_create_session(
     local_sdp.session_negotiate_ = local_sdp.session_config_;
 
     // Setup the negotiate DTLS role.
-    if (remote_sdp.get_dtls_role() == "active") {
+    if (ruc->remote_sdp_.get_dtls_role() == "active") {
         local_sdp.session_negotiate_.dtls_role = "passive";
-    } else if (remote_sdp.get_dtls_role() == "passive") {
+    } else if (ruc->remote_sdp_.get_dtls_role() == "passive") {
         local_sdp.session_negotiate_.dtls_role = "active";
-    } else if (remote_sdp.get_dtls_role() == "actpass") {
+    } else if (ruc->remote_sdp_.get_dtls_role() == "actpass") {
         local_sdp.session_negotiate_.dtls_role = local_sdp.session_config_.dtls_role;
     } else {
         // @see: https://tools.ietf.org/html/rfc4145#section-4.1
@@ -601,13 +545,13 @@ srs_error_t SrsRtcServer::do_create_session(
     }
     local_sdp.set_dtls_role(local_sdp.session_negotiate_.dtls_role);
 
-    session->set_remote_sdp(remote_sdp);
+    session->set_remote_sdp(ruc->remote_sdp_);
     // We must setup the local SDP, then initialize the session object.
     session->set_local_sdp(local_sdp);
     session->set_state(WAITING_STUN);
 
     // Before session initialize, we must setup the local SDP.
-    if ((err = session->initialize(req, dtls, srtp, username)) != srs_success) {
+    if ((err = session->initialize(req, ruc->dtls_, ruc->srtp_, username)) != srs_success) {
         return srs_error_wrap(err, "init");
     }
 
@@ -623,7 +567,7 @@ SrsRtcConnection* SrsRtcServer::find_session_by_username(const std::string& user
     return dynamic_cast<SrsRtcConnection*>(conn);
 }
 
-srs_error_t SrsRtcServer::on_timer(srs_utime_t interval, srs_utime_t tick)
+srs_error_t SrsRtcServer::on_timer(srs_utime_t interval)
 {
     srs_error_t err = srs_success;
 
@@ -648,8 +592,7 @@ srs_error_t SrsRtcServer::on_timer(srs_utime_t interval, srs_utime_t tick)
         session->switch_to_context();
 
         string username = session->username();
-        srs_trace("RTC: session destroy by timeout, username=%s, summary: %s", username.c_str(),
-            session->stat_->summary().c_str());
+        srs_trace("RTC: session destroy by timeout, username=%s", username.c_str());
 
         // Use manager to free session and notify other objects.
         _srs_rtc_manager->remove(session);
@@ -766,5 +709,5 @@ void RtcServerAdapter::stop()
 {
 }
 
-SrsResourceManager* _srs_rtc_manager = new SrsResourceManager("RTC", true);
+SrsResourceManager* _srs_rtc_manager = NULL;
 

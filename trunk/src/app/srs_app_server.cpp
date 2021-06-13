@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_app_server.hpp>
 
@@ -1000,9 +983,6 @@ srs_error_t SrsServer::http_handle()
     if ((err = http_api_mux->handle("/api/v1/rtc_clusters", new SrsGoApiRtcClusters())) != srs_success) {
         return srs_error_wrap(err, "handle rtc clusters");
     }
-    if ((err = http_api_mux->handle("/api/v1/perf", new SrsGoApiPerf())) != srs_success) {
-        return srs_error_wrap(err, "handle perf");
-    }
 #ifdef SRS_GB28181
     if ((err = http_api_mux->handle("/api/v1/gb28181", new SrsGoApiGb28181())) != srs_success) {
         return srs_error_wrap(err, "handle raw");
@@ -1264,9 +1244,6 @@ srs_error_t SrsServer::setup_ticks()
         if ((err = timer_->tick(2, 3 * SRS_UTIME_SECONDS)) != srs_success) {
             return srs_error_wrap(err, "tick");
         }
-        if ((err = timer_->tick(3, 3 * SRS_UTIME_SECONDS)) != srs_success) {
-            return srs_error_wrap(err, "tick");
-        }
         if ((err = timer_->tick(4, 6 * SRS_UTIME_SECONDS)) != srs_success) {
             return srs_error_wrap(err, "tick");
         }
@@ -1308,7 +1285,6 @@ srs_error_t SrsServer::notify(int event, srs_utime_t interval, srs_utime_t tick)
 
     switch (event) {
         case 2: srs_update_system_rusage(); break;
-        case 3: srs_update_proc_stat(); break;
         case 4: srs_update_disk_stat(); break;
         case 5: srs_update_meminfo(); break;
         case 6: srs_update_platform_info(); break;
@@ -1562,7 +1538,7 @@ void SrsServer::resample_kbps()
         
         // add delta of connection to server kbps.,
         // for next sample() of server kbps can get the stat.
-        stat->kbps_add_delta(c->get_id(), conn);
+        stat->kbps_add_delta(c->get_id().c_str(), conn);
     }
     
     // TODO: FXME: support all other connections.
@@ -1669,8 +1645,8 @@ void SrsServer::remove(ISrsResource* c)
     ISrsStartableConneciton* conn = dynamic_cast<ISrsStartableConneciton*>(c);
 
     SrsStatistic* stat = SrsStatistic::instance();
-    stat->kbps_add_delta(c->get_id(), conn);
-    stat->on_disconnect(c->get_id());
+    stat->kbps_add_delta(c->get_id().c_str(), conn);
+    stat->on_disconnect(c->get_id().c_str());
 
     // use manager to free it async.
     conn_manager->remove(c);
@@ -1792,7 +1768,7 @@ srs_error_t SrsServer::on_reload_http_stream_updated()
     return err;
 }
 
-srs_error_t SrsServer::on_publish(SrsSource* s, SrsRequest* r)
+srs_error_t SrsServer::on_publish(SrsLiveSource* s, SrsRequest* r)
 {
     srs_error_t err = srs_success;
     
@@ -1808,7 +1784,7 @@ srs_error_t SrsServer::on_publish(SrsSource* s, SrsRequest* r)
     return err;
 }
 
-void SrsServer::on_unpublish(SrsSource* s, SrsRequest* r)
+void SrsServer::on_unpublish(SrsLiveSource* s, SrsRequest* r)
 {
     http_server->http_unmount(s, r);
     

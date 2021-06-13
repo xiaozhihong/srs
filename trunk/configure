@@ -132,7 +132,7 @@ END
 #
 # st(state-threads) the basic network library for SRS.
 LibSTRoot="${SRS_OBJS_DIR}/st"; LibSTfile="${LibSTRoot}/libst.a"
-if [[ $SRS_SHARED_ST == YES ]]; then LibSTfile="-lst"; fi
+if [[ $SRS_SHARED_ST == YES ]]; then LibSTfile="-L${LibSTRoot} -lst"; fi
 
 # srtp
 if [[ $SRS_RTC == YES ]]; then
@@ -148,6 +148,7 @@ fi
 if [[ $SRS_FFMPEG_FIT == YES ]]; then
   LibFfmpegRoot="${SRS_OBJS_DIR}/ffmpeg/include"; LibFfmpegFile="${SRS_OBJS_DIR}/ffmpeg/lib/libavcodec.a ${SRS_OBJS_DIR}/ffmpeg/lib/libswresample.a ${SRS_OBJS_DIR}/ffmpeg/lib/libavutil.a"
   LibFfmpegRoot="${LibFfmpegRoot} ${SRS_OBJS_DIR}/opus/include"; LibFfmpegFile="${LibFfmpegFile} ${SRS_OBJS_DIR}/opus/lib/libopus.a"
+  if [[ $SRS_SHARED_FFMPEG == YES ]]; then LibFfmpegFile="-L${SRS_OBJS_DIR}/ffmpeg/lib -lavcodec -lswresample -lavutil -L${SRS_OBJS_DIR}/opus/lib -lopus"; fi
 fi
 
 # openssl-1.1.0e, for the RTMP complex handshake.
@@ -167,8 +168,9 @@ fi
 
 # srt code path
 if [[ $SRS_SRT == YES ]]; then
-    LibSRTRoot="${SRS_WORKDIR}/src/srt"; LibSRTfile="${SRS_OBJS_DIR}/srt/lib/libsrt.a"
-    if [[ $SRS_SHARED_SRT == YES ]]; then LibSRTfile="-lsrt"; fi
+    SrsSRTRoot="${SRS_WORKDIR}/src/srt"
+    LibSRTRoot="${SRS_OBJS_DIR}/srt/include"; LibSRTfile="${SRS_OBJS_DIR}/srt/lib/libsrt.a"
+    if [[ $SRS_SHARED_SRT == YES ]]; then LibSRTfile="-L${SRS_OBJS_DIR}/srt/lib -lsrt"; fi
 fi
 
 # For iconv on macOS only, CentOS seems ok.
@@ -251,12 +253,12 @@ PROTOCOL_INCS="src/protocol"; MODULE_DIR=${PROTOCOL_INCS} . auto/modules.sh
 PROTOCOL_OBJS="${MODULE_OBJS[@]}"
 #
 #srt protocol features.
-if [ $SRS_SRT = YES ]; then
+if [[ $SRS_SRT == YES ]]; then
     MODULE_ID="SRT"
     MODULE_DEPENDS=("CORE" "KERNEL" "PROTOCOL" "APP")
-    ModuleLibIncs=(${SRS_OBJS_DIR})
+    ModuleLibIncs=(${SRS_OBJS_DIR} ${LibSSLRoot} ${LibSRTRoot})
     MODULE_FILES=("srt_server" "srt_handle" "srt_conn" "srt_to_rtmp" "ts_demux" "srt_data")
-    SRT_INCS=${LibSRTRoot}; MODULE_DIR=${LibSRTRoot} . auto/modules.sh
+    SRT_INCS=(${LibSRTRoot} ${SrsSRTRoot}); MODULE_DIR=${SrsSRTRoot} . auto/modules.sh
     SRT_OBJS="${MODULE_OBJS[@]}"
 fi
 
@@ -287,7 +289,7 @@ MODULE_FILES=("srs_app_server" "srs_app_conn" "srs_app_rtmp_conn" "srs_app_sourc
         "srs_app_mpegts_udp" "srs_app_rtsp" "srs_app_listener" "srs_app_async_call"
         "srs_app_caster_flv" "srs_app_process" "srs_app_ng_exec"
         "srs_app_hourglass" "srs_app_dash" "srs_app_fragment" "srs_app_dvr"
-        "srs_app_coworkers" "srs_app_hybrid")
+        "srs_app_coworkers" "srs_app_hybrid" "srs_app_threads")
 if [[ $SRS_RTC == YES ]]; then
     MODULE_FILES+=("srs_app_rtc_conn" "srs_app_rtc_dtls" "srs_app_rtc_sdp"
     "srs_app_rtc_queue" "srs_app_rtc_server" "srs_app_rtc_source" "srs_app_rtc_api"
@@ -302,13 +304,10 @@ if [[ $SRS_QUIC == YES ]]; then
         "srs_app_rtc_forward_quic_client" "srs_app_rtc_forward_quic_conn")
 fi
 if [[ $SRS_GB28181 == YES ]]; then
-    MODULE_FILES+=("srs_app_gb28181" "srs_app_gb28181_sip")
-fi
-if [[ $SRS_GB28181 == YES || $SRS_RTC == YES ]]; then
-    MODULE_FILES+=("srs_app_rtc_jitbuffer")
+    MODULE_FILES+=("srs_app_gb28181" "srs_app_gb28181_sip" "srs_app_gb28181_jitter")
 fi
 if [[ $SRS_GB28181 == YES ]]; then
-    MODULE_FILES+=("srs_app_sip")
+    MODULE_FILES+=("srs_app_gb28181_stack")
     ModuleLibIncs+=(${LibIconvRoot})
 fi
 
@@ -339,7 +338,8 @@ if [[ $SRS_QUIC == YES ]]; then
     ModuleLibIncs+=(${LibNgtcp2Root})
 fi
 if [[ $SRS_SRT == YES ]]; then
-    ModuleLibIncs+=("${LibSRTRoot[*]}")
+    ModuleLibIncs+=(${LibSRTRoot})
+    ModuleLibIncs+=("${SrsSRTRoot[*]}")
 fi
 MODULE_FILES=("srs_main_server")
 SERVER_INCS="src/main"; MODULE_DIR=${SERVER_INCS} . auto/modules.sh
@@ -355,8 +355,14 @@ fi
 if [[ $SRS_FFMPEG_FIT == YES ]]; then
     ModuleLibIncs+=("${LibFfmpegRoot[*]}")
 fi
+
 if [[ $SRS_QUIC == YES ]]; then
     ModuleLibIncs+=(${LibNgtcp2Root})
+fi
+
+if [[ $SRS_SRT == YES ]]; then
+    ModuleLibIncs+=(${LibSRTRoot})
+    ModuleLibIncs+=("${SrsSRTRoot[*]}")
 fi
 MODULE_FILES=()
 DEFINES=""
@@ -410,6 +416,8 @@ if [[ $SRS_QUIC == YES ]]; then
     ModuleLibIncs+=(${LibNgtcp2Root})
 fi
 if [[ $SRS_SRT == YES ]]; then
+    ModuleLibIncs+=(${LibSRTRoot})
+    ModuleLibIncs+=("${SrsSRTRoot[*]}")
     MODULE_OBJS="${MODULE_OBJS} ${SRT_OBJS[@]}"
 fi
 LINK_OPTIONS="${SrsLinkOptions}${SrsGprofLink}${SrsGperfLink}"
@@ -464,7 +472,7 @@ if [ $SRS_UTEST = YES ]; then
         ModuleLibIncs+=(${LibNgtcp2Root})
     fi
     if [[ $SRS_SRT == YES ]]; then
-        ModuleLibIncs+=("${LibSRTRoot[*]}")
+        ModuleLibIncs+=("${SrsSRTRoot[*]}")
     fi
     ModuleLibFiles=(${LibSTfile} ${LibSSLfile})
     if [[ $SRS_RTC == YES ]]; then
@@ -585,7 +593,8 @@ clean_st:
 
 st:
 	(cd ${SRS_OBJS_DIR} && rm -f srs srs_utest)
-	(cd ${SRS_OBJS_DIR}/${SRS_PLATFORM}/st-srs && \$(MAKE) clean && \$(MAKE) ${_ST_MAKE} EXTRA_CFLAGS="${_ST_EXTRA_CFLAGS}")
+	(cd ${SRS_OBJS_DIR}/${SRS_PLATFORM}/st-srs && \$(MAKE) clean)
+	(cd ${SRS_OBJS_DIR}/${SRS_PLATFORM}/st-srs && env EXTRA_CFLAGS="${_ST_EXTRA_CFLAGS}" \$(MAKE) ${_ST_MAKE_ARGS})
 	@echo "Please rebuild srs by: rm -f objs/srs && make"
 
 ffmpeg:
@@ -626,8 +635,9 @@ install:
 	@cp -f research/api-server/static-dir/index.html \$(__REAL_INSTALL)/objs/nginx/html
 	@cp -f research/api-server/static-dir/crossdomain.xml \$(__REAL_INSTALL)/objs/nginx/html
 	@cp -f research/api-server/static-dir/favicon.ico \$(__REAL_INSTALL)/objs/nginx/html
-	@cp -Rf research/players \$(__REAL_INSTALL)/objs/nginx/html
-	@cp -Rf research/console \$(__REAL_INSTALL)/objs/nginx/html
+	@cp -Rf research/players \$(__REAL_INSTALL)/objs/nginx/html/
+	@cp -Rf research/console \$(__REAL_INSTALL)/objs/nginx/html/
+	@cp -Rf 3rdparty/signaling/www/demos \$(__REAL_INSTALL)/objs/nginx/html/
 	@echo "Now copy binary files"
 	@mkdir -p \$(__REAL_INSTALL)/objs
 	@cp -f objs/srs \$(__REAL_INSTALL)/objs
@@ -810,6 +820,11 @@ if [ $SRS_GPROF = YES ]; then
     echo -e "${YELLOW}The gprof(GNU profile tool) is enabled, performance may suffer.${BLACK}"
 else
     echo -e "${GREEN}Note: The gprof(GNU profile tool) is disabled.${BLACK}"
+fi
+if [ $SRS_CROSS_BUILD = YES ]; then
+    echo -e "${YELLOW}The cross-build is enabled.${BLACK}"
+else
+    echo -e "${GREEN}Note: The cross-build is disabled.${BLACK}"
 fi
 if [ $SRS_VALGRIND = YES ]; then
     echo -e "${GREEN}The valgrind is enabled.${BLACK}"

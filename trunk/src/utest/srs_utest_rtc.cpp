@@ -1,25 +1,8 @@
-/*
-The MIT License (MIT)
-
-Copyright (c) 2013-2021 Winlin
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 #include <srs_utest_rtc.hpp>
 
 #include <srs_kernel_error.hpp>
@@ -731,20 +714,20 @@ VOID TEST(KernelRTCTest, NACKFetchRTPPacket)
 
     // The RTP queue will free the packet.
     if (true) {
-        SrsRtpPacket2* pkt = new SrsRtpPacket2();
+        SrsRtpPacket* pkt = new SrsRtpPacket();
         pkt->header.set_sequence(100);
         track->rtp_queue_->set(pkt->header.get_sequence(), pkt);
     }
 
     // If sequence not match, packet not found.
     if (true) {
-        SrsRtpPacket2* pkt = track->fetch_rtp_packet(10);
+        SrsRtpPacket* pkt = track->fetch_rtp_packet(10);
         EXPECT_TRUE(pkt == NULL);
     }
 
     // The sequence matched, we got the packet.
     if (true) {
-        SrsRtpPacket2* pkt = track->fetch_rtp_packet(100);
+        SrsRtpPacket* pkt = track->fetch_rtp_packet(100);
         EXPECT_TRUE(pkt != NULL);
     }
 
@@ -752,7 +735,7 @@ VOID TEST(KernelRTCTest, NACKFetchRTPPacket)
     if (true) {
         // The sequence is the "same", 1100%1000 is 100,
         // so we can also get it from the RTP queue.
-        SrsRtpPacket2* pkt = track->rtp_queue_->at(1100);
+        SrsRtpPacket* pkt = track->rtp_queue_->at(1100);
         EXPECT_TRUE(pkt != NULL);
 
         // But the track requires exactly match, so it returns NULL.

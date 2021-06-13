@@ -1,25 +1,8 @@
-/**
- * The MIT License (MIT)
- *
- * Copyright (c) 2013-2021 Winlin
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+//
+// Copyright (c) 2013-2021 Winlin
+//
+// SPDX-License-Identifier: MIT
+//
 
 #include <srs_core.hpp>
 
@@ -54,6 +37,7 @@ using namespace std;
 #include <srs_core_autofree.hpp>
 #include <srs_kernel_file.hpp>
 #include <srs_app_hybrid.hpp>
+#include <srs_app_threads.hpp>
 #ifdef SRS_RTC
 #include <srs_app_rtc_conn.hpp>
 #include <srs_app_rtc_server.hpp>
@@ -74,10 +58,10 @@ srs_error_t run_hybrid_server();
 void show_macro_features();
 
 // @global log and context.
-ISrsLog* _srs_log = new SrsFileLog();
-ISrsContext* _srs_context = new SrsThreadContext();
+ISrsLog* _srs_log = NULL;
+ISrsContext* _srs_context = NULL;
 // @global config object for app module.
-SrsConfig* _srs_config = new SrsConfig();
+SrsConfig* _srs_config = NULL;
 
 // @global version of srs, which can grep keyword "XCORE"
 extern const char* _srs_version;
@@ -91,7 +75,15 @@ SrsServer* _srs_server = NULL;
 srs_error_t do_main(int argc, char** argv)
 {
     srs_error_t err = srs_success;
-    
+
+    // Initialize global or thread-local variables.
+    if ((err = srs_thread_initialize()) != srs_success) {
+        return srs_error_wrap(err, "thread init");
+    }
+
+    // For background context id.
+    _srs_context->set_id(_srs_context->generate_id());
+
     // TODO: support both little and big endian.
     srs_assert(srs_is_little_endian());
 
@@ -219,10 +211,8 @@ srs_error_t do_main(int argc, char** argv)
     return err;
 }
 
-int main(int argc, char** argv) {
-    // For background context id.
-    _srs_context->set_id(_srs_context->generate_id());
-
+int main(int argc, char** argv)
+{
     srs_error_t err = do_main(argc, argv);
 
     if (err != srs_success) {
@@ -486,6 +476,11 @@ srs_error_t run_hybrid_server()
     // Do some system initialize.
     if ((err = _srs_hybrid->initialize()) != srs_success) {
         return srs_error_wrap(err, "hybrid initialize");
+    }
+
+    // Circuit breaker to protect server, which depends on hybrid.
+    if ((err = _srs_circuit_breaker->initialize()) != srs_success) {
+        return srs_error_wrap(err, "init circuit breaker");
     }
 
     // Should run util hybrid servers all done.
