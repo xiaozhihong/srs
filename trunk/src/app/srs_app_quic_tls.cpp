@@ -33,12 +33,10 @@ using namespace std;
 #include <srs_app_utility.hpp>
 #include <srs_app_pithy_print.hpp>
 #include <srs_core_autofree.hpp>
-#include <srs_app_quic_conn.hpp>
 #include <srs_app_server.hpp>
 #include <srs_service_utility.hpp>
 #include <srs_protocol_utility.hpp>
-#include <srs_app_quic_conn.hpp>
-#include <srs_app_quic_client.hpp>
+#include <srs_app_quic_transport.hpp>
 
 #include <openssl/err.h>
 
@@ -50,18 +48,19 @@ const string kDefaultCiphers =
 
 const string kDefaultGroups = "X25519:P-256:P-384:P-521";
 
-const string kHqAlpnDraft29 = "\x5hq-29";
+// TODO: FIXME: Currently hardcode, hq, h3 and other alpn must be set by application.
+const string kHqAlpnDraft29 = "\x5hq-29"; 
 const string kHqAlpnDraft30 = "\x5hq-30";
 const string kHqAlpnDraft31 = "\x5hq-31";
 const string kHqAlpnDraft32 = "\x5hq-32";
-const string kHqAlph = kHqAlpnDraft29 + kHqAlpnDraft30 + kHqAlpnDraft31 + kHqAlpnDraft32;
+const string kHqAlpnV1 = "\xahq-interop";
+const string kHqAlpn = kHqAlpnDraft29 + kHqAlpnDraft30 + kHqAlpnDraft31 + kHqAlpnDraft32 + kHqAlpnV1;
 
-// TODO: FIXME: quic have other draft
-
-const uint32_t QUIC_VER_DRAFT29 = 0xFF00001DU;
-const uint32_t QUIC_VER_DRAFT30 = 0xFF00001EU;
-const uint32_t QUIC_VER_DRAFT31 = 0xFF00001FU;
-const uint32_t QUIC_VER_DRAFT32 = 0xFF000020U;
+const uint32_t QUIC_VER_DRAFT29 = 0xFF00001Du;
+const uint32_t QUIC_VER_DRAFT30 = 0xFF00001Eu;
+const uint32_t QUIC_VER_DRAFT31 = 0xFF00001Fu;
+const uint32_t QUIC_VER_DRAFT32 = 0xFF000020u;
+const uint32_t QUIC_VER_V1 = 0x000000001u;
 
 namespace srs_ssl_quic_common {
 
@@ -78,11 +77,23 @@ static int send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert
   	return 1;
 }
 
-} // namespace srs_ssl_quic_common
+static int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
+                       const uint8_t *data, size_t len) 
+{
+  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
+  	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
+  	quic_transport->write_handshake(level, data, len);
+
+  	return 1;
+}
+
+} // namespace srs_ssl_quic_common
 
 namespace srs_ssl_quic_server {
 
+// ALPN: @see https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+// TODO: FIXME: QUIC application set this alpn as a call back function.
 static int alpn_select_proto_hq_cb(SSL *ssl, const uint8_t **out,
                                   uint8_t *outlen, const uint8_t *in,
                                   unsigned int inlen, void *arg) 
@@ -108,6 +119,10 @@ static int alpn_select_proto_hq_cb(SSL *ssl, const uint8_t **out,
     	case QUIC_VER_DRAFT32:
     	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnDraft32.data());
     	  	alpnlen = kHqAlpnDraft32.size();
+    	  	break;
+        case QUIC_VER_V1:
+    	  	alpn = reinterpret_cast<const uint8_t *>(kHqAlpnV1.data());
+    	  	alpnlen = kHqAlpnV1.size();
     	  	break;
     	default:
             srs_warn("unsupport quic version=%u", version);
@@ -144,22 +159,10 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
         if (ret != 0) {
             return 0;
         }
-  	  	if (level == NGTCP2_CRYPTO_LEVEL_APPLICATION && 
-            quic_transport->on_application_tx_key() != 0) {
-  	    		return 0;
+  	  	if (level == NGTCP2_CRYPTO_LEVEL_APPLICATION && quic_transport->on_application_tx_key() != 0) {
+  	    	return 0;
   	  	}
   	}
-
-  	return 1;
-}
-
-static int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
-                       const uint8_t *data, size_t len) 
-{
-  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
-  	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
-
-  	quic_transport->write_handshake(level, data, len);
 
   	return 1;
 }
@@ -173,7 +176,7 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
                                   const uint8_t *read_secret,
                                   const uint8_t *write_secret, size_t secret_len) 
 {
-  	SrsQuicClient* quic_transport = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
+  	SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport*>(SSL_get_app_data(ssl));
   	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
 
     if (read_secret) {
@@ -193,23 +196,12 @@ static int set_encryption_secrets(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
   	return 1;
 }
 
-static int add_handshake_data(SSL *ssl, OSSL_ENCRYPTION_LEVEL ossl_level,
-                       const uint8_t *data, size_t len) 
-{
-  	SrsQuicClient* quic_transport = static_cast<SrsQuicClient*>(SSL_get_app_data(ssl));
-  	ngtcp2_crypto_level level = ngtcp2_crypto_openssl_from_ossl_encryption_level(ossl_level);
-
-  	quic_transport->write_handshake(level, data, len);
-
-  	return 1;
-}
-
 } // namespace srs_ssl_quic_client
 
 SSL_QUIC_METHOD ssl_quic_server_method = 
 {
     .set_encryption_secrets = srs_ssl_quic_server::set_encryption_secrets,
-    .add_handshake_data = srs_ssl_quic_server::add_handshake_data,
+    .add_handshake_data = srs_ssl_quic_common::add_handshake_data,
     .flush_flight = srs_ssl_quic_common::flush_flight,
     .send_alert = srs_ssl_quic_common::send_alert
 };
@@ -217,7 +209,7 @@ SSL_QUIC_METHOD ssl_quic_server_method =
 SSL_QUIC_METHOD ssl_quic_client_method = 
 {
     .set_encryption_secrets = srs_ssl_quic_client::set_encryption_secrets,
-    .add_handshake_data = srs_ssl_quic_client::add_handshake_data,
+    .add_handshake_data = srs_ssl_quic_common::add_handshake_data,
     .flush_flight = srs_ssl_quic_common::flush_flight,
     .send_alert = srs_ssl_quic_common::send_alert
 };
@@ -478,14 +470,17 @@ srs_error_t SrsQuicTlsClientSession::init(const SrsQuicTlsContext* quic_tls_ctx,
             ERR_error_string(ERR_get_error(), NULL));
     }
 
+    // Set handler in ssl and callback when SSL_QUIC_METHOD happen.
     SSL_set_app_data(ssl_, handler);
     SSL_set_connect_state(ssl_);
 
-    SSL_set_alpn_protos(ssl_, reinterpret_cast<const uint8_t*>(kHqAlph.data()), kHqAlph.size());
+    // TODO: FIXME: alpn set by application, pass in args.
+    SSL_set_alpn_protos(ssl_, reinterpret_cast<const uint8_t*>(kHqAlpn.data()), kHqAlpn.size());
 
-    // TODO: FIXME: have better name? or config host name.
-    SSL_set_tlsext_host_name(ssl_, "127.0.0.1");
+    // TODO: FIXME: Have better name? Or remove this code.
+    SSL_set_tlsext_host_name(ssl_, "localhost");
 
+    // TODO: FIXME: SSL debug code, use srs_verbose log instead of stdout.
     if (false) {
         SSL_set_msg_callback(ssl_, SSL_trace);
         SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));
@@ -514,10 +509,13 @@ srs_error_t SrsQuicTlsServerSession::init(const SrsQuicTlsContext* quic_tls_ctx,
             ERR_error_string(ERR_get_error(), NULL));
     }
 
+    // Set handler in ssl and callback when SSL_QUIC_METHOD happen.
     SSL_set_app_data(ssl_, handler);
     SSL_set_accept_state(ssl_);
+    // Enable 0rtt.
     SSL_set_quic_early_data_enabled(ssl_, 1);
 
+    // TODO: FIXME: SSL debug code, use srs_verbose log instead of stdout.
     if (false) {
         SSL_set_msg_callback(ssl_, SSL_trace);
         SSL_set_msg_callback_arg(ssl_, BIO_new_fp(stdout, 0));

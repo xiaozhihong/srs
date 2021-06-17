@@ -55,6 +55,7 @@ public:
     virtual srs_error_t on_quic_client(SrsQuicConnection* conn, SrsQuicListenerType type) = 0;
 };
 
+// The QUIC listen, recv udp packet and pass to SrsQuicIoLoop.
 class SrsQuicListener : virtual public ISrsUdpMuxHandler
 {
 public:
@@ -63,7 +64,9 @@ public:
 public:
     srs_error_t listen(const std::string& ip, int port);
 public:
+    // Get SSL key to initlize QUIC tls context.
     std::string get_key();
+    // Get SSL cert to initlize QUIC tls context.
     std::string get_cert();
 public:
     virtual srs_error_t on_udp_packet(SrsUdpMuxSocket* skt);
@@ -71,13 +74,15 @@ public:
     sockaddr_in* local_addr() { return &listen_sa_; }
     socklen_t local_addrlen() { return sizeof(listen_sa_); }
 private:
+    // Handle when accept new quic conneciont(in application layer).
     ISrsQuicHandler* handler_;
+    // Udp listener.
     SrsUdpMuxListener* listener_;
     SrsQuicListenerType listen_type_;
     struct sockaddr_in listen_sa_;
 };
 
-// The QUIC server instance, handle UDP packet, manage QUIC connections.
+// The QUIC server instance, handle UDP packet, manage QUIC connections(in transport layer).
 class SrsQuicIoLoop
 {
 public:
@@ -95,6 +100,7 @@ private:
     srs_error_t send_version_negotiation(SrsUdpMuxSocket* skt, const uint8_t version, 
         const uint8_t* dcid, const size_t dcid_len, const uint8_t* scid, const size_t scid_len);
 private:
+    // Manage QUIC connection(in transport layer).
     SrsResourceManager* quic_conn_map_;
 };
 

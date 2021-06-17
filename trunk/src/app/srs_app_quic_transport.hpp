@@ -74,7 +74,7 @@ enum SrsQuicStreamState
     SrsQuicStreamStateClosed = 4,
 };
 
-// Ring buffer with fixed size, avoid alloc/free memoyy multi times.
+// Ring buffer with fixed size, avoid alloc/free memory too frequently.
 class SrsQuicStreamBuffer
 {
 public:
@@ -89,10 +89,15 @@ public:
     size_t size() const { return static_cast<size_t>(size_); }
     bool empty() const { return size_ == 0; }
 private:
-    int capacity_;
-    int size_;
+    // 
     uint8_t* buffer_;
+    // Capacity of the buffer.
+    int capacity_;
+    // Current size of the buffer.
+    int size_;
+    // Next write postion.
     int write_pos_;
+    // Next read postion.
     int read_pos_;
 };
 

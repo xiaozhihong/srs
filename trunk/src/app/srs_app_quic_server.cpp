@@ -66,14 +66,20 @@ srs_error_t SrsQuicServer::on_quic_client(SrsQuicConnection* conn, SrsQuicListen
 {
     srs_error_t err = srs_success;
 
+    // Create QUIC application connections by listen type, the life of `conn` is manage by 
+    // SrsQuicIoLoop, applicaion connections never free it.
+
     if (type == SrsQuicListenerRtcForward) {
         SrsRtcForwardQuicConn* rtc_forward_quic_conn = new SrsRtcForwardQuicConn(this, conn);
         conn_manager_->add(rtc_forward_quic_conn);
         if ((err = rtc_forward_quic_conn->start()) != srs_success) {
+            srs_freep(rtc_forward_quic_conn);
             return srs_error_wrap(err, "quic rtc_forward_quic_conn start failed");
         }
     } else if (type == SrsQuicListenerHttpApi) {
+        // TODO: FIXME:  HTTP3 support.
     } else if (type == SrsQuicListenerHttpStream) {
+        // TODO: FIXME:  HTTP3 support.
     }
 
 

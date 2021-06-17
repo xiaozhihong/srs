@@ -35,13 +35,13 @@
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/ngtcp2_crypto.h>
 
-// Dump quic conn in hex format.
+// Dump quic conn id from bin to hex format.
 extern std::string quic_conn_id_dump(const uint8_t* data, const size_t len);
 extern std::string quic_conn_id_dump(const std::string& connid);
 
 extern uint32_t generate_reserved_version(const sockaddr *sa, socklen_t salen, uint32_t version);
 
-// Lib ngtcp2  log handle.
+// Lib ngtcp2 log handle.
 extern void ngtcp2_log_handle(void *user_data, const char *fmt, ...);
 // qlog handler
 extern void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen);
@@ -66,7 +66,7 @@ extern ngtcp2_crypto_aead crypto_aead_aes_128_gcm();
 // Helper function to generate ngtcp2_crypto_md.
 extern ngtcp2_crypto_md crypto_md_sha256();
 
-// Helper class to generate quic token.
+// Helper class to generate quic token to verify client has validate addr.
 class SrsQuicToken
 {
 public:

@@ -167,7 +167,6 @@ srs_error_t SrsQuicConnection::init(sockaddr* local_addr, const socklen_t local_
     }
 
    	tls_context_ = new SrsQuicTlsServerContext();
-    // TODO: FIXME: get tls key/cert.
     string tls_key = listener_->get_key();
     string tls_cert = listener_->get_cert();
     if ((err = tls_context_->init(tls_key, tls_cert)) != srs_success) {

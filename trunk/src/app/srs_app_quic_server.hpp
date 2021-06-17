@@ -43,7 +43,7 @@ class SrsQuicTlsServerContext;
 class SrsQuicToken;
 class SrsQuicListener;
 
-// The QUIC server instance, manage QUIC connections.
+// The QUIC server instance, manage QUIC connections(in application layer).
 class SrsQuicServer : public ISrsQuicHandler
 {
 public:
@@ -65,6 +65,7 @@ private:
     srs_error_t listen_rtc_server_quic();
 private:
     std::vector<SrsQuicListener*> listeners_;
+    // Manager QUIC connections(in application layer).
     SrsResourceManager* conn_manager_;
 };
 

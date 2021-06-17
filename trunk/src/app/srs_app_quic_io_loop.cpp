@@ -159,12 +159,12 @@ srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* 
     size_t scid_len = 0;
 
     int ret = ngtcp2_pkt_decode_version_cid(&version, &dcid, &dcid_len, &scid, &scid_len, 
-            data, size, kServerCidLen);
+                                            data, size, kServerCidLen);
     if (ret != 0) {
         if (ret == 1) {
             return send_version_negotiation(skt, version, dcid, dcid_len, scid, scid_len);
         } else {
-            return srs_error_new(ERROR_QUIC_UDP, "invalid/unsupport packet");
+            return srs_error_new(ERROR_QUIC_UDP, "invalid/unsupport quic udp packet");
         }
     }
 
@@ -183,7 +183,8 @@ srs_error_t SrsQuicIoLoop::on_udp_packet(SrsUdpMuxSocket* skt, SrsQuicListener* 
             return srs_error_new(ERROR_QUIC_CONN, "maybe duplicated conn %s", 
                 quic_conn_id_dump(dcid, dcid_len).c_str());
         }
-        // TODO: FIXME: It maybe no a new connection,  when server side handshake loss and client 
+        // TODO: FIXME: 
+        // It maybe no a new connection,  when server side handshake loss and client 
         // retry connect can occru, have not implement this case.
         if ((err = new_connection(skt, listener, &quic_conn)) != srs_success) {
             return srs_error_wrap(err, "create new quic connection failed");
@@ -198,17 +199,18 @@ srs_error_t SrsQuicIoLoop::send_version_negotiation(SrsUdpMuxSocket* skt, const 
 {
     srs_error_t err = srs_success;
 
-    vector<uint32_t> sv;
-    sv.push_back(generate_reserved_version(reinterpret_cast<const sockaddr*>(skt->peer_addr()), 
+    vector<uint32_t> server_versions;
+    server_versions.push_back(generate_reserved_version(reinterpret_cast<const sockaddr*>(skt->peer_addr()), 
         skt->peer_addrlen(), version));
+    server_versions.push_back(NGTCP2_PROTO_VER_V1);
 
     for (uint32_t v = NGTCP2_PROTO_VER_MIN; v <= NGTCP2_PROTO_VER_MAX; ++v) {
-        sv.push_back(v);
+        server_versions.push_back(v);
     }
 
     char buf[NGTCP2_MAX_PKTLEN_IPV4];
     int nb = ngtcp2_pkt_write_version_negotiation(reinterpret_cast<uint8_t*>(buf), sizeof(buf), 
-        (uint8_t)(random() % 256), dcid, dcid_len, scid, scid_len, sv.data(), sv.size());
+        (uint8_t)(random() % 256), dcid, dcid_len, scid, scid_len, server_versions.data(), server_versions.size());
     if (nb < 0) {
         return srs_error_new(ERROR_QUIC_CONN, "version negotiation failed, ret=%d", nb);
     }
@@ -233,15 +235,18 @@ srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener*
     if (ret == -1) {
         return srs_error_new(ERROR_QUIC_CONN, "accept failed, ret=%d(%s)", ret, ngtcp2_strerror(ret));
     } else if (ret == 1) {
-        return send_version_negotiation(skt, hd.version, hd.scid.data, hd.scid.datalen,
-                                          hd.dcid.data, hd.dcid.datalen);
+        srs_warn("quic client version=%u, server version %u-%u, need negotation", 
+            hd.version, NGTCP2_PROTO_VER_MIN, NGTCP2_PROTO_VER_MAX);
+        return send_version_negotiation(skt, hd.version, hd.scid.data, hd.scid.datalen, hd.dcid.data, hd.dcid.datalen);
     }
 
     switch (hd.type) {
-        // TODO: FIXME:process special quic connection type.
         case NGTCP2_PKT_INITIAL: {
+            // TODO: FIXME: check token
         } break;
         case NGTCP2_PKT_0RTT: {
+            // TODO: FIXME: process 0rtt packet.
+            srs_warn("quic 0rtt packet");
         } break;
         default: {
         } break;
@@ -253,14 +258,17 @@ srs_error_t SrsQuicIoLoop::new_connection(SrsUdpMuxSocket* skt, SrsQuicListener*
         srs_freep(quic_conn);
         return srs_error_wrap(err, "quic connect init failed");
     }
+
+    // Accept quic conn, and start state-thread run cycle of this quic conn.
+    if ((err = listener->on_accept_quic_conn(quic_conn)) != srs_success) {
+        srs_freep(quic_conn);
+        return srs_error_wrap(err, "on quic client failed");
+    }
+
     string conn_id = quic_conn->get_scid();
     srs_trace("add new quic connection=%s", quic_conn_id_dump(conn_id).c_str());
     quic_conn_map_->add_with_name(conn_id, quic_conn);
     *p_conn = quic_conn;
-
-    if ((err = listener->on_accept_quic_conn(quic_conn)) != srs_success) {
-        return srs_error_wrap(err, "on quic client failed");
-    }
 
     return err;
 }

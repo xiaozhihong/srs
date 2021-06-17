@@ -40,7 +40,7 @@ using namespace std;
 #include <srs_app_quic_tls.hpp>
 #include <srs_app_quic_util.hpp>
 
-#define SRS_TICKID_QUIC_TIMER     1
+#define SRS_TICKID_QUIC_TIMER 1
 
 const uint64_t kNgtcp2NoTimeout = UINT64_MAX;
 
@@ -394,6 +394,7 @@ SrsQuicTransport::SrsQuicTransport()
     last_err_ = SrsQuicErrorSuccess;
     blocking_ = false;
 
+    // Set ngtcp2 quic callback functions.
     cb_.client_initial = ngtcp2_crypto_client_initial_cb;
     cb_.recv_client_initial = ngtcp2_crypto_recv_client_initial_cb;
     cb_.recv_crypto_data = cb_recv_crypto_data;
@@ -625,7 +626,7 @@ int SrsQuicTransport::on_application_tx_key()
 int SrsQuicTransport::write_handshake(ngtcp2_crypto_level level, const uint8_t *data, size_t datalen) 
 {
     SrsQuicCryptoBuffer& crypto = crypto_buffer_[(int)level];
-    // Store data info crypto buffer.
+    // Store data into crypto buffer.
     crypto.queue.push_back(string(reinterpret_cast<const char*>(data), datalen));
 
     string& buf = crypto.queue.back();
@@ -714,7 +715,7 @@ int SrsQuicTransport::on_stream_open(int64_t stream_id)
         streams_.erase(stream_id);
     }
 
-    // New quic open from peer.
+    // New quic stream open.
     SrsQuicStreamDirection direction = (ngtcp2_is_bidi_stream(stream_id) != 0) ? 
         SrsQuicStreamDirectionSendRecv : SrsQuicStreamDirectionRecvOnly;
     SrsQuicStream* new_stream = new SrsQuicStream(stream_id, direction, SrsQuicStreamStateOpened, this);
@@ -765,6 +766,7 @@ int SrsQuicTransport::on_stream_reset(int64_t stream_id, uint64_t final_size, ui
 int SrsQuicTransport::get_new_connection_id(ngtcp2_cid *cid, uint8_t *token, size_t cidlen)
 {
     cid->datalen = cidlen;
+    // TODO: FIXME: connid must no be conflicted.
     srs_generate_rand_data(cid->data, cid->datalen);
     srs_trace("generate new conn id %s", quic_conn_id_dump(cid->data, cid->datalen).c_str());
 
@@ -1096,7 +1098,7 @@ srs_error_t SrsQuicTransport::send_connection_close()
         return srs_error_new(ERROR_QUIC_CONN, "close quic connection failed");
     }
 
-    // TODO: FIXME: need to timeout for N timeout, if peer is no alive.
+    // TODO: FIXME: Need to stop when timeout for N times, if peer is no alive.
 
     return err;
 }

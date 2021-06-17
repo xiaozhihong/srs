@@ -41,7 +41,7 @@ using namespace std;
 
 string quic_conn_id_dump(const uint8_t* data, const size_t len)
 {
-    char capacity[256];
+    static char capacity[256];
     char* buf = capacity;
     int size = 0;
     for (size_t i = 0; i < len; ++i) {
@@ -63,6 +63,7 @@ string quic_conn_id_dump(const string& connid)
 
 uint32_t generate_reserved_version(const sockaddr *sa, socklen_t salen, uint32_t version)
 {
+    // TODO: FIXME: Too many magic number in this function.
     uint32_t h = 0x811C9DC5u;
     const uint8_t *p = reinterpret_cast<const uint8_t*>(sa);
     const uint8_t *ep = p + salen;
@@ -96,15 +97,21 @@ ngtcp2_crypto_md crypto_md_sha256()
   	return md;
 }
 
+// libngtcp2 log callback function.
 void ngtcp2_log_handle(void *user_data, const char *fmt, ...) 
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
-    va_list ap;
-    va_start(ap, fmt);
-    quic_transport->on_ngtcp2_log(fmt, ap);
-    va_end(ap);
+    if (quic_transport) {
+        va_list ap;
+        va_start(ap, fmt);
+        quic_transport->on_ngtcp2_log(fmt, ap);
+        va_end(ap);
+    }
 }
 
+// @see: https://www.ietf.org/archive/id/draft-ietf-quic-qlog-main-schema-00.html
+// qlog trace all the events of quic connection, can analyses using visualize 
+// toolsuite https://qvis.quictools.info
 void qlog_handle(void *user_data, uint32_t flags, const void *data, size_t datalen)
 {
     SrsQuicTransport* quic_transport = static_cast<SrsQuicTransport *>(user_data);
@@ -244,10 +251,11 @@ int SrsQuicToken::derive_token_key(uint8_t *key, size_t &keylen, uint8_t *iv,
   	return 0;
 }
 
+// Generate token combine with `sa` to confirm client has validate ip addr.
 int SrsQuicToken::generate_token(uint8_t *token, size_t &tokenlen, const sockaddr *sa) 
 {
     uint8_t plaintext[8];
-    uint64_t t = srs_get_system_startup_time();
+    uint64_t t = srs_get_system_time_for_quic();
 
     uint8_t addr[256];
     size_t addrlen = generate_token_addr(addr, sizeof(addr), sa);
