@@ -108,7 +108,7 @@ srs_error_t SrsHourGlass::cycle()
             int event = it->first;
             srs_utime_t interval = it->second;
 
-            if (interval == 0 || (total_elapse % interval) == 0) {
+            if (interval == 0 || ((total_elapse != 0) && (total_elapse % interval) == 0)) {
                 ++_srs_pps_timer->sugar;
 
                 if ((err = handler->notify(event, interval, total_elapse)) != srs_success) {
@@ -125,6 +125,88 @@ srs_error_t SrsHourGlass::cycle()
     return err;
 }
 
+ISrsDynamicTimer::ISrsDynamicTimer()
+{
+}
+
+ISrsDynamicTimer::~ISrsDynamicTimer()
+{
+}
+
+SrsDynamicTimer::SrsDynamicTimer(string label, ISrsDynamicTimer* h, srs_utime_t resolution)
+{
+    label_ = label;
+    handler = h;
+    _resolution = resolution;
+    trd = new SrsSTCoroutine("timer-" + label, this, _srs_context->get_id());
+}
+
+SrsDynamicTimer::~SrsDynamicTimer()
+{
+    srs_freep(trd);
+}
+
+srs_error_t SrsDynamicTimer::start()
+{
+    srs_error_t err = srs_success;
+
+    if ((err = trd->start()) != srs_success) {
+        return srs_error_wrap(err, "start timer");
+    }
+
+    return err;
+}
+
+void SrsDynamicTimer::stop()
+{
+    trd->stop();
+}
+
+void SrsDynamicTimer::tick(int event, srs_utime_t expired_time)
+{
+    ticks[event] = expired_time;
+}
+
+void SrsDynamicTimer::untick(int event)
+{
+    map<int, srs_utime_t>::iterator it = ticks.find(event);
+    if (it != ticks.end()) {
+        ticks.erase(it);
+    }
+}
+
+srs_error_t SrsDynamicTimer::cycle()
+{
+    srs_error_t err = srs_success;
+
+    while (true) {
+        if ((err = trd->pull()) != srs_success) {
+            return srs_error_wrap(err, "quit");
+        }
+
+        srs_utime_t now_time = srs_update_system_time();
+    
+        map<int, srs_utime_t>::iterator it;
+        for (it = ticks.begin(); it != ticks.end(); ++it) {
+            int event = it->first;
+            srs_utime_t expired_time = it->second;
+
+            if (now_time >= expired_time) {
+                // Timeout, and mark it never expired, unless tick it again.
+                it->second = -1;
+
+                if ((err = handler->notify(event, now_time)) != srs_success) {
+                    return srs_error_wrap(err, "notify");
+                }
+            }
+        }
+
+        srs_usleep(_resolution);
+    }
+    
+    return err;
+}
+
 ISrsFastTimer::ISrsFastTimer()
 {
 }
@@ -135,8 +217,8 @@ ISrsFastTimer::~ISrsFastTimer()
 
 SrsFastTimer::SrsFastTimer(std::string label, srs_utime_t interval)
 {
-    interval_ = interval;
     trd_ = new SrsSTCoroutine(label, this, _srs_context->get_id());
+    interval_ = interval;
 }
 
 SrsFastTimer::~SrsFastTimer()

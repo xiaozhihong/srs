@@ -257,7 +257,7 @@ srs_error_t SrsQuicClient::connect(const std::string& ip, uint16_t port, srs_uti
         return srs_error_wrap(err, "connect to %s:%u failed", ip.c_str(), port);
     }
 
-    if ((err = write_protocol_data()) != srs_success) {
+    if ((err = write_data()) != srs_success) {
         return srs_error_wrap(err, "send quic client init packet failed");
     }
 

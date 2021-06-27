@@ -36,6 +36,14 @@ bool srs_is_server_gracefully_close(srs_error_t err)
     return code == ERROR_HTTP_STREAM_EOF;
 }
 
+bool srs_is_quic_transport_error(srs_error_t err)
+{
+    int error_code = srs_error_code(err);
+    return false;
+    // TODO: FIXME:
+    // return error_code == 
+}
+
 SrsCplxError::SrsCplxError()
 {
     code = ERROR_SUCCESS;

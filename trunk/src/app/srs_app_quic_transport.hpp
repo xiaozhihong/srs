@@ -55,17 +55,6 @@ enum SrsQuicStreamDirection
     SrsQuicStreamDirectionSendRecv = 3,
 };
 
-enum SrsQuicError
-{
-    SrsQuicErrorSuccess = 0,
-    SrsQuicErrorTimeout = 1,
-    SrsQuicErrorIO = 2,
-    SrsQuicErrorBadStream = 3,
-    SrsQuicErrorEOF = 4,
-    SrsQuicErrorAgain = 5,
-    SrsQuicErrorClose = 6,
-};
-
 enum SrsQuicStreamState
 {
     SrsQuicStreamStateOpening = 1,
@@ -88,6 +77,7 @@ public:
     int skip(int size);
     size_t size() const { return static_cast<size_t>(size_); }
     bool empty() const { return size_ == 0; }
+    bool full() const { return size_ == capacity_; }
 private:
     // 
     uint8_t* buffer_;
@@ -108,16 +98,18 @@ public:
                   const SrsQuicStreamState& state, SrsQuicTransport* quic_transport);
     ~SrsQuicStream();
 public:
-    int write(const void* buf, int size, srs_utime_t timeout);
-    int write_fully(const void* buf, int size, srs_utime_t timeout);
-    int read(void* buf, int buf_size, srs_utime_t timeout);
-    int read_fully(void* buf, int buf_size, srs_utime_t timeout);
+    srs_error_t write(const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
+    srs_error_t write_fully(const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
+    srs_error_t read(void* buf, int buf_size, ssize_t* nb_read, srs_utime_t timeout);
+    srs_error_t read_fully(void* buf, int buf_size, ssize_t* nb_read, srs_utime_t timeout);
 public:
     int wait_writeable(srs_utime_t timeout);
     int notify_writeable();
     int wait_readable(srs_utime_t timeout);
     int notify_readable();
+public:
     int on_data(const uint8_t* buf, size_t size);
+    srs_error_t flush();
 public:
     bool is_opening() const { return state_ == SrsQuicStreamStateOpening; }
     bool is_opened() const { return state_ == SrsQuicStreamStateOpened; }
@@ -142,7 +134,7 @@ private:
 };
 
 // Quic transport base class, process quic packets.
-class SrsQuicTransport : virtual public ISrsHourGlass
+class SrsQuicTransport : virtual public ISrsDynamicTimer
 {
 public:
     SrsQuicTransport();
@@ -172,28 +164,25 @@ public:
     std::string get_local_name();
     std::string get_remote_name();
     void wait_stream_writeable(int64_t stream_id);
-    SrsQuicError get_last_error() const { return last_err_; }
-    void set_last_error(SrsQuicError err) { last_err_ = err; }
-    void set_blocking(bool b) { blocking_ = b; }
-    bool is_blocking() const { return blocking_; }
-    int write_stream_data(int64_t stream_id, SrsQuicStreamBuffer& buffer);
-	srs_error_t update_timer();
+    srs_error_t write_stream_data(int64_t stream_id, SrsQuicStreamBuffer* buffer);
+	srs_error_t update_transport_timer();
+    srs_error_t update_idle_timer();
+    srs_error_t update_idle_timer_in_closing_or_draining();
 private:
-    void clear_last_error() { last_err_ = SrsQuicErrorSuccess; }
-private:
-    srs_error_t on_timer();
+    srs_error_t on_transport_timer();
+    srs_error_t on_idle_timer();
 private:
     srs_error_t on_error();
-    srs_error_t disconnect();
+    srs_error_t enter_closing_period(int error_code);
+    srs_error_t enter_draining_period();
 
     void notify_accept_stream(int64_t stream_id);
     void notify_stream_writeable(int64_t stream_id);
-// interface ISrsHourGlass
+// interface ISrsDynamicTimer
 protected:
-    virtual srs_error_t notify(int event, srs_utime_t interval, srs_utime_t tick);
+    virtual srs_error_t notify(int event, srs_utime_t now_time);
 protected:
-    bool check_timeout();
-    srs_error_t write_protocol_data();
+    srs_error_t write_data();
     srs_error_t send_connection_close();
     // Get static secret to generate quic token.
     uint8_t* get_static_secret();
@@ -227,19 +216,19 @@ public:
     // TODO: FIXME: add annotation.
     virtual srs_error_t open_stream(int64_t* stream_id);
     virtual srs_error_t close_stream(int64_t stream_id, uint64_t app_error_code);
-    int accept_stream(srs_utime_t timeout, int64_t& stream_id);
-    int write(int64_t stream_id, const void* buf, int size, srs_utime_t timeout);
-    int read(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
-    int read_fully(int64_t stream_id, void* buf, int size, srs_utime_t timeout);
+    srs_error_t accept_stream(srs_utime_t timeout, int64_t& stream_id);
+
+    srs_error_t write(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
+    srs_error_t write_fully(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
+    srs_error_t read(int64_t stream_id, void* buf, int size, ssize_t* nb_read, srs_utime_t timeout);
+    srs_error_t read_fully(int64_t stream_id, void* buf, int size, ssize_t* nb_read, srs_utime_t timeout);
 
 private:
+    bool in_draininig() const { return draining_; }
     SrsQuicStream* find_stream(int64_t stream_id);
 
 protected:
-    void open_qlog_file(const std::string& conn_id);
-
-protected:
-    SrsHourGlass* timer_;
+    SrsDynamicTimer* timer_;
 protected:
     ngtcp2_callbacks cb_;
     ngtcp2_settings settings_;
@@ -270,13 +259,12 @@ protected:
     SrsQuicTlsSession* tls_session_;
     SrsQuicToken* quic_token_;
 protected:
+    bool draining_;
+    bool alive_;
     std::string connection_close_packet_;
     std::map<int64_t, SrsQuicStream*> streams_;
-    SrsQuicError last_err_;
     srs_cond_t accept_stream_cond_;
     std::deque<int64_t> wait_accept_streams_;
-private:
-    bool blocking_;
 };
 
 #endif

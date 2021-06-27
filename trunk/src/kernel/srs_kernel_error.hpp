@@ -382,7 +382,7 @@
 #define ERROR_GB28181_H264_FRAME_FULL       6020
 
 ///////////////////////////////////////////////////////
-// RTC protocol error.
+// QUIC protocol error.
 ///////////////////////////////////////////////////////
 #define ERROR_QUIC_PORT                     7000
 #define ERROR_QUIC_UDP                      7001
@@ -393,6 +393,17 @@
 #define ERROR_QUIC_TOKEN                    7006
 #define ERROR_QUIC_CLIENT                   7007
 #define ERROR_QUIC_STREAM                   7008
+
+#define ERROR_QUIC_AGAIN                    7009
+#define ERROR_QUIC_BAD_STREAM               7010
+#define ERROR_QUIC_CLOSING                  7011
+#define ERROR_QUIC_DRAINING                 7012
+#define ERROR_QUIC_DROP_CONN                7013
+#define ERROR_QUIC_RETRY                    7014
+#define ERROR_QUIC_TIMEOUT                  7015
+#define ERROR_QUIC_UDP_SEND                 7016
+#define ERROR_QUIC_READ                     7017
+#define ERROR_QUIC_WRITE                    7018
 
 ///////////////////////////////////////////////////////
 // HTTP API error.

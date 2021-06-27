@@ -132,11 +132,12 @@ srs_error_t SrsRtcForwardQuicConn::accept_stream()
     srs_error_t err = srs_success;
 
     int64_t stream_id = -1;
-    if (quic_conn_->accept_stream(SRS_UTIME_SECONDS, stream_id) != 0) {
-        if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
-            return srs_error_new(ERROR_RTC_FORWARD, "accept stream failed");
+    if ((err = quic_conn_->accept_stream(SRS_UTIME_SECONDS, stream_id)) != srs_success) {
+        if (srs_error_code(err) != ERROR_QUIC_TIMEOUT) {
+            return srs_error_wrap(err, "accept stream failed");
         }
-        return err;
+        srs_freep(err);
+        return srs_success;
     }
 
     srs_trace("accept new stream %ld", stream_id);
@@ -221,11 +222,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::read_header(uint16_t& body_len, srs_u
     srs_error_t err = srs_success;
 
     char header[2];
-    int nb = quic_conn_->read_fully(stream_id_, header, sizeof(header), timeout);
-    if (nb == 0) {
-        return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
-    } else if (nb < 0) {
-        return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
+    if ((err = quic_conn_->read_fully(stream_id_, header, sizeof(header), NULL, timeout)) != srs_success) {
+        return srs_error_wrap(err, "read header failed");;
     }
 
     body_len = header[0] << 8 | header[1];
@@ -238,16 +236,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::read_header(uint16_t& body_len, srs_u
 
 srs_error_t SrsRtcForwardQuicStreamThread::read_body(void* buf, int size, srs_utime_t timeout)
 {
-    srs_error_t err = srs_success;
-
-    int nb = quic_conn_->read_fully(stream_id_, buf, size, timeout);
-    if (nb == 0) {
-        return srs_error_new(ERROR_RTC_FORWARD, "quic stream close");
-    } else if (nb < 0) {
-        return srs_error_new(ERROR_RTC_FORWARD, "quic stream error");
-    }
-
-    return err;
+    return quic_conn_->read_fully(stream_id_, buf, size, NULL, timeout);
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::process_req(srs_utime_t timeout)
@@ -348,11 +337,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::process_rtc_forward_req(SrsJsonObject
     stream.write_2bytes(body_len);
     stream.write_string(control_response);
 
-    if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
-        return srs_error_new(ERROR_RTC_FORWARD, "write quic control req failed");
-    }
-
-    return err;
+    return quic_conn_->write_fully(stream_id_, stream.data(), stream.pos(), NULL, timeout_);
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::process_request_keyframe_req(SrsJsonObject* json_obj)
@@ -458,7 +443,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
             consumer->wait(1);
             // TODO: FIXME: bad code.
             if ((err = process_req(0)) != srs_success) {
-                if (quic_conn_->get_last_error() != SrsQuicErrorTimeout) {
+                if (srs_error_code(err) != ERROR_QUIC_TIMEOUT) {
                     return srs_error_wrap(err, "quic stream error");
                 }
                 srs_freep(err);
@@ -477,8 +462,8 @@ srs_error_t SrsRtcForwardQuicStreamThread::rtc_forward()
         SrsBuffer header_writer(fixed_buffer, 2);
         header_writer.write_2bytes(rtp_size);
 
-        if (quic_conn_->write(stream_id_, stream.data(), stream.pos(), timeout_) < 0) {
-            return srs_error_new(ERROR_RTC_FORWARD, "quic write stream failed");
+        if ((err = quic_conn_->write_fully(stream_id_, stream.data(), stream.pos(), NULL, timeout_)) != srs_success) {
+            return srs_error_wrap(err, "quic write stream failed");
         }
     }
 

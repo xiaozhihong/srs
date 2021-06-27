@@ -89,6 +89,42 @@ public:
     virtual srs_error_t cycle();
 };
 
+// The handler for the dynamic timer.
+class ISrsDynamicTimer
+{
+public:
+    ISrsDynamicTimer();
+    virtual ~ISrsDynamicTimer();
+public:
+    // When time is ticked, this function is called.
+    virtual srs_error_t notify(int event, srs_utime_t now_time) = 0;
+};
+
+// Dynamic Timer, similar with HourGlass, but the interval is dynamic
+class SrsDynamicTimer : public ISrsCoroutineHandler
+{
+private:
+    std::string label_;
+    SrsCoroutine* trd;
+    ISrsDynamicTimer* handler;
+    srs_utime_t _resolution;
+    // The ticks, key: event id, value: expired_time
+    std::map<int, srs_utime_t> ticks;
+public:
+    SrsDynamicTimer(std::string label, ISrsDynamicTimer* h, srs_utime_t resolution);
+    virtual ~SrsDynamicTimer();
+public:
+    virtual srs_error_t start();
+    virtual void stop();
+public:
+    // insert or update expired_time of event.
+    void tick(int event, srs_utime_t expired_time);
+    // remove event.
+    void untick(int event);
+public:
+    virtual srs_error_t cycle();
+};
+
 // The handler for fast timer.
 class ISrsFastTimer
 {
