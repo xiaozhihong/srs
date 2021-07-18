@@ -120,14 +120,13 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
 
         SrsQuicClient* quic_client = new SrsQuicClient();
         SrsAutoFree(SrsQuicClient, quic_client);
-        int64_t rtc_forward_stream = -1;
 
-        err = do_cycle(rtc_forward_stream, quic_client, rtc_source);
-        if (rtc_forward_stream != -1) {
-            srs_error_t tmp_err = quic_client->close_stream(rtc_forward_stream, srs_error_code(err));
-            if (tmp_err != srs_success) {
-                srs_freep(tmp_err);
-            }
+        err = do_cycle(quic_client, rtc_source);
+
+        srs_error_t tmp_err = quic_client->close(srs_error_code(err));
+        if (tmp_err != srs_success) {
+            srs_warn("quic client close failed, err=%s", srs_error_desc(tmp_err).c_str());
+            srs_freep(tmp_err);
         }
 
         // TODO: FIXME: config auto quic forward behavior.
@@ -156,8 +155,7 @@ srs_error_t SrsRtcForwardQuicClient::cycle()
     return err;
 }
 
-srs_error_t SrsRtcForwardQuicClient::do_cycle(int64_t& rtc_forward_stream, 
-                                              SrsQuicClient* quic_client, 
+srs_error_t SrsRtcForwardQuicClient::do_cycle(SrsQuicClient* quic_client, 
                                               SrsRtcSource* rtc_source)
 {
     srs_error_t err = srs_success;
@@ -167,6 +165,7 @@ srs_error_t SrsRtcForwardQuicClient::do_cycle(int64_t& rtc_forward_stream,
             return srs_error_wrap(err, "quic client io thread");
         }
 
+        int64_t rtc_forward_stream = -1;
         if ((err = connect_and_open_stream(quic_client, rtc_forward_stream)) != srs_success) {
             return srs_error_wrap(err, "connect failed");
         }

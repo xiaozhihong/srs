@@ -191,7 +191,7 @@ srs_error_t SrsDynamicTimer::cycle()
             int event = it->first;
             srs_utime_t expired_time = it->second;
 
-            if (now_time >= expired_time) {
+            if (expired_time > 0 && now_time >= expired_time) {
                 // Timeout, and mark it never expired, unless tick it again.
                 it->second = -1;
 

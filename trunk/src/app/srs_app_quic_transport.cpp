@@ -92,10 +92,9 @@ static int cb_stream_close(ngtcp2_conn *conn, int64_t stream_id, uint64_t app_er
     return quic_transport->on_stream_close(stream_id, app_error_code);
 }
 
-static int cb_rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx,
-    ngtcp2_rand_usage usage)
+static void cb_rand(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *rand_ctx)
 {
-    return srs_generate_rand_data(dest, destlen);
+    srs_generate_rand_data(dest, destlen);
 }
 
 static int cb_get_new_connection_id(ngtcp2_conn *conn, ngtcp2_cid *cid, uint8_t *token,
@@ -111,7 +110,7 @@ static int cb_remove_connection_id(ngtcp2_conn *conn, const ngtcp2_cid *cid, voi
     return quic_transport->remove_connection_id(cid);
 }
 
-static int cb_path_validation(ngtcp2_conn *conn, const ngtcp2_path *path,
+static int cb_path_validation(ngtcp2_conn *conn, uint32_t flags, const ngtcp2_path *path,
         ngtcp2_path_validation_result res, void *user_data) 
 {
     return 0;
@@ -429,7 +428,7 @@ SrsQuicTransport::SrsQuicTransport()
     cb_.recv_retry = ngtcp2_crypto_recv_retry_cb;
     cb_.extend_max_local_streams_bidi = NULL;
     cb_.extend_max_local_streams_uni = NULL;
-    cb_.rand = cb_rand;
+	cb_.rand = cb_rand;
     cb_.get_new_connection_id = cb_get_new_connection_id;
     cb_.remove_connection_id = cb_remove_connection_id;
     cb_.update_key = cb_update_key;
@@ -904,6 +903,11 @@ srs_error_t SrsQuicTransport::accept_stream(srs_utime_t timeout, int64_t& stream
     return 0;
 }
 
+srs_error_t SrsQuicTransport::close(uint64_t error_code)
+{
+    return enter_closing_period(error_code);
+}
+
 srs_error_t SrsQuicTransport::notify(int type, srs_utime_t now_time)
 {
     srs_error_t err = srs_success;
@@ -933,11 +937,11 @@ srs_error_t SrsQuicTransport::write_data()
     if ((err = write_stream_data(-1, NULL)) != srs_success) {
         srs_freep(err);
     }
+
     for (std::map<int64_t, SrsQuicStream*>::iterator iter = streams_.begin(); 
             iter != streams_.end(); ++iter) {
         SrsQuicStream* stream = iter->second;
         if ((err = stream->flush()) != srs_success) {
-            // srs_error("flush quic stream %ld failed, err=%s", iter->first, srs_error_desc(err).c_str());
             srs_freep(err);
         }
     }
@@ -960,6 +964,9 @@ srs_error_t SrsQuicTransport::on_transport_timer()
     }
 
     if ((err = write_data()) != srs_success) {
+        if (srs_error_code(err) != ERROR_QUIC_AGAIN) {
+            srs_error("write data failed, err=%s", srs_error_desc(err).c_str());
+        }
         return srs_error_wrap(err, "write protocol data failed");
     }
 
@@ -968,14 +975,19 @@ srs_error_t SrsQuicTransport::on_transport_timer()
 
 srs_error_t SrsQuicTransport::on_idle_timer()
 {
+    srs_trace("idle timeout");
     srs_error_t err = srs_success;
     if (ngtcp2_conn_is_in_closing_period(conn_)) {
+        srs_trace("quic conn %s no alive, in closing period when idle timeot", get_conn_name().c_str());
         alive_ = false;
+        // TODO: FIXME: remove connection.
         return err;
     }
 
     if (in_draininig() || ngtcp2_conn_is_in_draining_period(conn_)) {
+        srs_trace("quic conn %s no alive, in draining period when idle timeot", get_conn_name().c_str());
         alive_ = false;
+        // TODO: FIXME: remove connection.
         return err;
     }
 
@@ -1017,6 +1029,8 @@ srs_error_t SrsQuicTransport::enter_closing_period(int error_code)
     if (nwrite < 0) {
         return srs_error_new(ERROR_QUIC_CONN, "generate quic close frame failed");
     }
+    
+    srs_trace("quic conn %s enter closing period", get_conn_name().c_str());
 
     // Store quic close frame, retry until success.
     connection_close_packet_.assign(reinterpret_cast<const char*>(buf), nwrite);
@@ -1036,6 +1050,8 @@ srs_error_t SrsQuicTransport::enter_draining_period()
         srs_warn("update idle timer failed, err=%s", srs_error_desc(err).c_str());
         srs_freep(err);
     }
+
+    srs_trace("quic conn %s enter draining period", get_conn_name().c_str());
 
     return err;
 }
@@ -1067,11 +1083,12 @@ srs_error_t SrsQuicTransport::write_stream_data(int64_t stream_id, SrsQuicStream
 
         const uint8_t* data = buffer ? buffer->data() : NULL;
         size_t size = buffer ? buffer->sequent_size() : 0;
+        ngtcp2_tstamp pkt_ts = srs_get_system_time_for_quic();
         int nwrite = ngtcp2_conn_write_stream(conn_, &path, NULL, udp_send_buffer_, udp_send_buffer_size_, 
-                                              &ndatalen, flags, stream_id, data, size,
-                                              srs_get_system_time_for_quic());
+                                              &ndatalen, flags, stream_id, data, size, pkt_ts);
 
         if (nwrite == 0) {
+            ngtcp2_conn_update_pkt_tx_time(conn_, pkt_ts);
             return srs_error_new(ERROR_QUIC_AGAIN, "quic conn congested");
         }
 
@@ -1237,14 +1254,30 @@ srs_error_t SrsQuicTransport::close_stream(int64_t stream_id, uint64_t app_error
 srs_error_t SrsQuicTransport::write(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout)
 {
     srs_error_t err = srs_success;
+
+    if (ngtcp2_conn_is_in_closing_period(conn_)) {
+        return srs_error_new(ERROR_QUIC_CLOSING, "quic conn in closing state");
+    }
+    
+    if (in_draininig() || ngtcp2_conn_is_in_draining_period(conn_)) {
+        return srs_error_new(ERROR_QUIC_DRAINING, "quic conn in draning state");
+    }
+
     SrsQuicStream* stream = find_stream(stream_id);
     if (stream == NULL) {
         return srs_error_new(ERROR_QUIC_BAD_STREAM, "can not found quic stream %ld", stream_id);
     }
 
-    if ((err = stream->write(buf, size, nb_write, timeout)) != srs_success) {
+    ssize_t nb = 0;
+    if ((err = stream->write(buf, size, &nb, timeout)) != srs_success) {
         return srs_error_wrap(err, "write stream %ld failed", stream_id);
     }
+
+    if (nb_write) {
+        *nb_write = nb;
+    }
+
+    timer_->tick(SRS_TICKID_QUIC_TRANSPORT_TIMER, srs_get_system_time_for_quic() / SRS_UTIME_MILLISECONDS);
 
     return srs_success;
 }
@@ -1252,6 +1285,14 @@ srs_error_t SrsQuicTransport::write(int64_t stream_id, const void* buf, int size
 srs_error_t SrsQuicTransport::write_fully(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout)
 {
     srs_error_t err = srs_success;
+    
+    if (ngtcp2_conn_is_in_closing_period(conn_)) {
+        return srs_error_new(ERROR_QUIC_CLOSING, "quic conn in closing state");
+    }
+    
+    if (in_draininig() || ngtcp2_conn_is_in_draining_period(conn_)) {
+        return srs_error_new(ERROR_QUIC_DRAINING, "quic conn in draning state");
+    }
 
     SrsQuicStream* stream = find_stream(stream_id);
     if (stream == NULL) {
@@ -1270,6 +1311,8 @@ srs_error_t SrsQuicTransport::write_fully(int64_t stream_id, const void* buf, in
     if (nb_write) {
         *nb_write = nb;
     }
+
+    timer_->tick(SRS_TICKID_QUIC_TRANSPORT_TIMER, srs_get_system_time_for_quic() / SRS_UTIME_MILLISECONDS);
 
     return srs_success;
 }

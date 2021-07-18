@@ -354,9 +354,7 @@ srs_error_t SrsRtcForwardQuicStreamThread::cycle()
             req_->get_stream_url().c_str(), srs_error_desc(err).c_str());
     }
 
-    quic_conn_->close_stream(stream_id_, srs_error_code(err));
-
-    return err;
+    return quic_conn_->close(srs_error_code(err));
 }
 
 srs_error_t SrsRtcForwardQuicStreamThread::do_cycle()

@@ -218,6 +218,8 @@ public:
     virtual srs_error_t close_stream(int64_t stream_id, uint64_t app_error_code);
     srs_error_t accept_stream(srs_utime_t timeout, int64_t& stream_id);
 
+    srs_error_t close(uint64_t error_code);
+
     srs_error_t write(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
     srs_error_t write_fully(int64_t stream_id, const void* buf, int size, ssize_t* nb_write, srs_utime_t timeout);
     srs_error_t read(int64_t stream_id, void* buf, int size, ssize_t* nb_read, srs_utime_t timeout);
